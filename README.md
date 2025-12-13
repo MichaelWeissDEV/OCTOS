@@ -15,9 +15,18 @@
 
 ---
 
-## Overview
+## Project Statistics
 
-**OCTOS** is an offline compiler tool designed for developers who want to understand, analyze, and optimize compiled code. Write code in multiple programming languages, compile it to assembly, and examine the generated machine instructions with a beautiful, feature-rich UI.
+- **Language**: C++ 17
+- **Framework**: Qt 6
+- **License**: MIT
+- **Status**: Work In Progress
+
+## What is OCTOS?
+
+**OCTOS** is a desktop application for studying and optimizing compiled code. Write code in multiple programming languages, compile it to assembly, and examine the generated machine instructions with a beautiful, feature-rich UI.
+
+It uses Docker for isolated compilation and provides a rich UI for visualization.
 
 Originally developed as an internal pet project, OCTOS is now open source!
 
@@ -27,6 +36,7 @@ Originally developed as an internal pet project, OCTOS is now open source!
 Multiple Compiler Versions can be used and compared side by side:
 
 ![Compared Compiler Versions](docs/img/2.png)
+
 ---
 
 **IMPORTANT:** THIS IS AN INTERNAL PROJECT NOW OPEN SOURCE. IT IS STILL A WORK IN PROGRESS AND NOT PRODUCTION READY.
@@ -34,11 +44,17 @@ THIS WAS INSPIRED BY TOOLS LIKE GODbolt BUT AIMED AT OFFLINE USAGE.
 THER PROJECT IS AWSOME AND YOU SHOULD DEFINITELY CHECK IT OUT: https://godbolt.org/ OCTOS IS NOT A COMPETITOR TO GODBOLT JUST A TOY PROJECT FOR ME AND IF YOU IF YOU WANT. 
 I HIGHLY RECOMMEND TO CHECK OUT GODBOLT AND MAYBE  LEAVE A STAR OR SUPORT THE PROJECT IF YOU LIKE IT. THIS IS JUST A PERSONAL PROJECT OF MINE BUT YOU ARE WELCOME TO USE IT AND CONTRIBUTE.
 
-
-
 ---
 
-## Features
+## Key Features
+
+- **Multi-language compilation**: C/C++, Rust, Java, Python, Ada, C#
+- **Docker-based isolated compilation**: Safe, reproducible builds
+- **Real-time assembly visualization**: See generated code instantly
+- **Advanced code filtering and annotation**: Customize your view
+- **Syntax highlighting**: For multiple assembly variants
+- **Compiler error display**: Clear error messages
+- **Snippet management system**: Save and reuse code
 
 ### Multi-Language Support
 - **C / C++** (GCC, Clang)
@@ -57,15 +73,18 @@ I HIGHLY RECOMMEND TO CHECK OUT GODBOLT AND MAYBE  LEAVE A STAR OR SUPORT THE PR
 - **CPU**: Modern multi-core processor (2+ cores recommended)
 - **RAM**: 4GB minimum (8GB+ recommended for Docker)
 - **Storage**: 20GB+ for Docker images and project files 
+
 **NOTE:** Docker images are downloaded BY YOU they are not included in the repository.
 
 ### Software
 - **Docker**: >= 20.10 (for containerized compilation)
 - **Qt Runtime**: >= 6.0
+- **C++ 17 compiler**
 - **Operating System**: Linux (primary), macOS/Windows with WSL2
 
 *NOTE* : Windows is NOT officially supported since i am only developing and testing on Linux. For Apple the same applies but at least it is POSIX compliant and i could test some basic functionality but i am only working on Linux. You are welcome to contribute fixes for other OSes.
 
+---
 
 ## Quick Start
 
@@ -199,6 +218,18 @@ I welcome contributions! Whether you want to:
 5. Push to your branch (`git push origin feature/amazing-feature`)
 6. Open a Pull Request
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines. Don't worry about perfection - this is a personal project but every contribution is welcome!
+
+---
+
+## Learn More
+
+This project is perfect for:
+- Computer Science students learning compilers
+- Developers optimizing code
+- Assembly language enthusiasts
+- Performance engineers
+
 ---
 
 ## Known Limitations
@@ -224,12 +255,11 @@ I welcome contributions! Whether you want to:
 
 ---
 
-##  License
+## License
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
 **Note:** This is an open source project converted from an internal repository. All original developers retain credit for their contributions. I welcome every contribution to make this project better! But i am not responsible for any issues arising from its use.
-
 
 ---
 
@@ -247,7 +277,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ---
 
-
 <div align="center">
   If you find OCTOS useful, please consider starring the repository!
 </div>
@@ -257,6 +286,8 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 ## 🔗 Quick Links
 
 - [GitHub Repository](https://github.com/MichaelWeissDEV/OCTOS)
+- [Installation Guide](INSTALL.md) - Setup instructions
+- [Contributing Guide](CONTRIBUTING.md) - How to contribute
 - [Issue Tracker](https://github.com/MichaelWeissDEV/OCTOS/issues)
 - [Discussions](https://github.com/MichaelWeissDEV/OCTOS/discussions)
 
@@ -265,4 +296,5 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 **Status**: This project is actively being developed. I am working on new features and improvements regularly!
 Feel free to contribute or suggest features!
 I am happy about every star and every contribution!
-**IMPORTANT:** THIS IS AN INTERNAL PROJECT NOW OPEN SOURCE. IT IS STILL A WORK IN PROGRESS AND NOT PRODUCTION READY.
+
+**Originally created as an internal project · Now open source on GitHub · Everyone is welcome!**
