@@ -1,8 +1,8 @@
 # OCTOS - Offline Compiler Tool Optimized Assembly Scrutinizer
 
 <div align="center">
-  <img src="assets/OCTOS.png" alt="OCTOS Logo" width="200" height="200">
-
+  <img src="OCTOS.png" alt="OCTOS Logo" width="200" height="200">
+  
   **A multi-language assembly compiler and optimizer with Docker containerization**
 
   [![WIP](https://img.shields.io/badge/Status-Work%20In%20Progress-orange)](https://github.com/MichaelWeissDEV/OCTOS)
