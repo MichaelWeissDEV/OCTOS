@@ -2,7 +2,7 @@
 
 <div align="center">
   <img src="OCTOS.png" alt="OCTOS Logo" width="200" height="200">
-  
+
   **A multi-language assembly compiler and optimizer with Docker containerization**
 
   [![WIP](https://img.shields.io/badge/Status-Work%20In%20Progress-orange)](https://github.com/MichaelWeissDEV/OCTOS)
@@ -29,6 +29,13 @@
 It uses Docker for isolated compilation and provides a rich UI for visualization.
 
 Originally developed as an internal pet project, OCTOS is now open source!
+
+![alt text](../docs/img/1.png)
+
+Multiple Compiler Versions can be used and compared side by side:
+
+![alt text](../docs/img/2.png)
+
 
 **IMPORTANT:** THIS IS AN INTERNAL PROJECT NOW OPEN SOURCE. IT IS STILL A WORK IN PROGRESS AND NOT PRODUCTION READY.
 THIS WAS INSPIRED BY TOOLS LIKE GODbolt BUT AIMED AT OFFLINE USAGE. 
