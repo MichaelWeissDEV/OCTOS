@@ -39,16 +39,13 @@ Multiple Compiler Versions can be used and compared side by side:
 
 ---
 
-**IMPORTANT:** THIS IS AN INTERNAL PROJECT NOW OPEN SOURCE. IT IS STILL A WORK IN PROGRESS AND NOT PRODUCTION READY.
-THIS WAS INSPIRED BY TOOLS LIKE GODbolt BUT AIMED AT OFFLINE USAGE. 
-THER PROJECT IS AWSOME AND YOU SHOULD DEFINITELY CHECK IT OUT: https://godbolt.org/ OCTOS IS NOT A COMPETITOR TO GODBOLT JUST A TOY PROJECT FOR ME AND IF YOU IF YOU WANT. 
-I HIGHLY RECOMMEND TO CHECK OUT GODBOLT AND MAYBE  LEAVE A STAR OR SUPORT THE PROJECT IF YOU LIKE IT. THIS IS JUST A PERSONAL PROJECT OF MINE BUT YOU ARE WELCOME TO USE IT AND CONTRIBUTE.
+**Status**: OCTOS is an open-source project currently under active development. While functional, it is not yet considered production-ready. This project was inspired by tools like [Godbolt](https://godbolt.org/), but is designed specifically for offline usage. OCTOS is a personal learning and development tool, not a competitor to Godbolt. If you find this project useful, contributions and feedback are welcome!
 
 ---
 
 ## Key Features
 
-- **Multi-language compilation**: C/C++, Rust, Java, Python, Ada, C#
+- **Multi-language compilation**: C/C++, Rust, Java, Python, C#
 - **Docker-based isolated compilation**: Safe, reproducible builds
 - **Real-time assembly visualization**: See generated code instantly
 - **Advanced code filtering and annotation**: Customize your view
@@ -62,7 +59,6 @@ I HIGHLY RECOMMEND TO CHECK OUT GODBOLT AND MAYBE  LEAVE A STAR OR SUPORT THE PR
 - **Java** (javac)
 - **Python** (py_compile)
 - **C#** (csc)
-- **Ada** (GNAT) (EXPERIMENTAL/WIP)
 
 
 ---
@@ -74,7 +70,7 @@ I HIGHLY RECOMMEND TO CHECK OUT GODBOLT AND MAYBE  LEAVE A STAR OR SUPORT THE PR
 - **RAM**: 4GB minimum (8GB+ recommended for Docker)
 - **Storage**: 20GB+ for Docker images and project files 
 
-**NOTE:** Docker images are downloaded BY YOU they are not included in the repository.
+*Note*: Docker images are downloaded separately and are not included in the repository.
 
 ### Software
 - **Docker**: >= 20.10 (for containerized compilation)
@@ -82,7 +78,7 @@ I HIGHLY RECOMMEND TO CHECK OUT GODBOLT AND MAYBE  LEAVE A STAR OR SUPORT THE PR
 - **C++ 17 compiler**
 - **Operating System**: Linux (primary), macOS/Windows with WSL2
 
-*NOTE* : Windows is NOT officially supported since i am only developing and testing on Linux. For Apple the same applies but at least it is POSIX compliant and i could test some basic functionality but i am only working on Linux. You are welcome to contribute fixes for other OSes.
+*Note*: Windows is not officially supported as development and testing are conducted exclusively on Linux. macOS support is limited due to platform differences. Contributions for Windows and macOS compatibility are welcome.
 
 ---
 
@@ -132,7 +128,7 @@ make -j4
 ### Docker Image Management
 
 OCTOS automatically pulls and caches compiler Docker images:
-- **gcc:latest** for C/C++/Ada
+- **gcc:latest** for C/C++
 - **rust:latest** for Rust
 - **eclipse-temurin:latest** for Java
 - **python:latest** for Python
@@ -249,9 +245,8 @@ This project is perfect for:
 - [ ] Additional language support
 - [ ] Assembly diff comparison
 - [ ] Enhanced UI/UX features
-- [ ] FIX ADA assembly output
-- [ ] FIX Known Issues
-- [ ] ADD more documentation or anny for the Start :)
+- [ ] Fix known issues
+- [ ] Add comprehensive documentation
 
 ---
 
@@ -259,16 +254,16 @@ This project is perfect for:
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
-**Note:** This is an open source project converted from an internal repository. All original developers retain credit for their contributions. I welcome every contribution to make this project better! But i am not responsible for any issues arising from its use.
+**Note**: This project was converted from an internal repository. All original contributors retain credit for their work. Contributions are welcome to help improve the project.
 
 ---
 
 ## Community & Support
 
 ### Getting Help
--  **Documentation**: Check the [docs](docs/) folder (COMING SOON)
--  **Report Issues**: Use [GitHub Issues](https://github.com/MichaelWeissDEV/OCTOS/issues)
--  **Discussions**: Join [GitHub Discussions](https://github.com/MichaelWeissDEV/OCTOS/discussions)
+- **Documentation**: Check the [docs](docs/) folder (Coming Soon)
+- **Report Issues**: Use [GitHub Issues](https://github.com/MichaelWeissDEV/OCTOS/issues)
+- **Discussions**: Join [GitHub Discussions](https://github.com/MichaelWeissDEV/OCTOS/discussions)
 
 ### Acknowledgments
 - **Qt Framework** for the beautiful cross-platform UI
@@ -293,8 +288,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ---
 
-**Status**: This project is actively being developed. I am working on new features and improvements regularly!
-Feel free to contribute or suggest features!
-I am happy about every star and every contribution!
+**Status**: OCTOS is actively maintained with regular updates and improvements. Contributions and feature suggestions are welcome.
 
-**Originally created as an internal project · Now open source on GitHub · Everyone is welcome!**
+**Originally created as an internal project · Now open source on GitHub · All contributors welcome**
