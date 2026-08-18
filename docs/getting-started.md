@@ -213,7 +213,7 @@ sudo systemctl start docker
 ### No Assembly Output
 
 **Why**: Language/compiler combination not supported yet
-**Solution**: See [README.md](README.md#features) for supported languages
+**Solution**: See [README.md](../README.md#major-features) for supported languages
 
 ### Out of Memory
 
@@ -259,7 +259,7 @@ docker system prune
 After getting comfortable with OCTOS:
 
 1. **Deep Dive**
-   - Read [Advanced Guide](docs/ADVANCED.md)
+   - Read [User Guide](user-guide/index.md)
    - Study compiler internals
    - Experiment with different architectures
 
@@ -267,7 +267,7 @@ After getting comfortable with OCTOS:
    - Add a new language
    - Improve UI/UX
    - Fix bugs
-   - See [CONTRIBUTING.md](CONTRIBUTING.md)
+   - See [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 3. **Share**
    - Show colleagues/friends
@@ -279,9 +279,9 @@ After getting comfortable with OCTOS:
 
 ## 📚 Resources
 
-- 📖 [README.md](README.md) - Full documentation
-- 💾 [Installation Guide](INSTALL.md) - Setup help
-- 🤝 [Contributing Guide](CONTRIBUTING.md) - How to help
+- 📖 [README.md](../README.md) - Full documentation
+- 💾 [Installation Guide](installation.md) - Setup help
+- 🤝 [Contributing Guide](../CONTRIBUTING.md) - How to help
 - 💬 [Discussions](https://github.com/MichaelWeissDEV/OCTOS/discussions) - Ask questions
 
 ---
@@ -295,10 +295,10 @@ A: Yes! MIT licensed and open source.
 A: Yes, for compiler isolation and consistency.
 
 **Q: Can I compile on Windows?**
-A: Yes, with WSL2. See [Installation Guide](INSTALL.md).
+A: Yes, with WSL2. See [Installation Guide](installation.md).
 
 **Q: How can I contribute?**
-A: Fork, make changes, submit PR. See [Contributing](CONTRIBUTING.md).
+A: Fork, make changes, submit PR. See [Contributing](../CONTRIBUTING.md).
 
 **Q: What languages does OCTOS support?**
 A: C, C++, Rust, Java, Python, C#, Ada. More coming!

@@ -62,6 +62,8 @@ class CompilerOutputPane : public QWidget {
     QComboBox* m_syntaxCombo;
     QComboBox* m_compilerCombo;
     QLineEdit* m_flagsInput;
+    QLabel* m_titleLabel;
+    void updateTitle();
     QPushButton* m_closeButton;
     CodeEditor* m_editor;
 

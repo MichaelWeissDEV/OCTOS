@@ -36,7 +36,7 @@ void CompilerOutputPane::setupUi() {
     headerLayout->setHorizontalSpacing(6);
     headerLayout->setVerticalSpacing(4);
 
-    QLabel* langLabel = new QLabel("Lang:");
+    QLabel* langLabel = new QLabel("Language:");
     langLabel->setStyleSheet("color: #cccccc; font-size: 11px;");
 
     m_languageCombo = new QComboBox();
@@ -67,7 +67,7 @@ void CompilerOutputPane::setupUi() {
     connect(m_languageCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &CompilerOutputPane::onLanguageChanged);
 
-    QLabel* syntaxLabel = new QLabel("Syn:");
+    QLabel* syntaxLabel = new QLabel("Syntax:");
     syntaxLabel->setStyleSheet("color: #cccccc; font-size: 11px;");
 
     m_syntaxCombo = new QComboBox();
@@ -93,7 +93,7 @@ void CompilerOutputPane::setupUi() {
     connect(m_syntaxCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &CompilerOutputPane::onSyntaxChanged);
 
-    QLabel* compilerLabel = new QLabel("Comp:");
+    QLabel* compilerLabel = new QLabel("Compiler:");
     compilerLabel->setStyleSheet("color: #cccccc; font-size: 11px;");
 
     m_compilerCombo = new QComboBox();
@@ -166,16 +166,20 @@ void CompilerOutputPane::setupUi() {
 
     connect(m_closeButton, &QPushButton::clicked, this, &CompilerOutputPane::onCloseClicked);
 
-    headerLayout->addWidget(langLabel, 0, 0);
-    headerLayout->addWidget(m_languageCombo, 0, 1);
-    headerLayout->addWidget(syntaxLabel, 0, 2);
-    headerLayout->addWidget(m_syntaxCombo, 0, 3);
-    headerLayout->addWidget(compilerLabel, 0, 4);
-    headerLayout->addWidget(m_compilerCombo, 0, 5);
-    headerLayout->addWidget(m_closeButton, 0, 6);
+    m_titleLabel = new QLabel("Compiler Output");
+    m_titleLabel->setStyleSheet("font-weight: bold; font-size: 13px; color: #4fc1ff; padding-bottom: 4px; border-bottom: 1px solid #3e3e42; margin-bottom: 4px;");
+    headerLayout->addWidget(m_titleLabel, 0, 0, 1, 7);
 
-    headerLayout->addWidget(flagsLabel, 1, 0);
-    headerLayout->addWidget(m_flagsInput, 1, 1, 1, 6);
+    headerLayout->addWidget(langLabel, 1, 0);
+    headerLayout->addWidget(m_languageCombo, 1, 1);
+    headerLayout->addWidget(syntaxLabel, 1, 2);
+    headerLayout->addWidget(m_syntaxCombo, 1, 3);
+    headerLayout->addWidget(compilerLabel, 1, 4);
+    headerLayout->addWidget(m_compilerCombo, 1, 5);
+    headerLayout->addWidget(m_closeButton, 0, 6, 2, 1, Qt::AlignTop | Qt::AlignRight);
+
+    headerLayout->addWidget(flagsLabel, 2, 0);
+    headerLayout->addWidget(m_flagsInput, 2, 1, 1, 6);
 
     headerLayout->setColumnStretch(5, 1);
 
@@ -189,6 +193,7 @@ void CompilerOutputPane::setupUi() {
 
     mainLayout->addWidget(m_headerWidget);
     mainLayout->addWidget(m_editor);
+    updateTitle();
 }
 
 void CompilerOutputPane::setOutputText(const QString& text, bool isError) {
@@ -212,6 +217,7 @@ void CompilerOutputPane::setCompilerList(const QStringList& compilers) {
     if (index >= 0) {
         m_compilerCombo->setCurrentIndex(index);
     }
+    updateTitle();
 }
 
 QString CompilerOutputPane::getSelectedCompiler() const { return m_compilerCombo->currentText(); }
@@ -230,6 +236,7 @@ void CompilerOutputPane::setAssemblyLineMapping(const QMap<int, QVector<int>>& m
 
 void CompilerOutputPane::onCompilerChanged(int index) {
     if (index >= 0) {
+        updateTitle();
         emit compilerChanged(m_compilerCombo->currentText());
     }
 }
@@ -237,6 +244,7 @@ void CompilerOutputPane::onCompilerChanged(int index) {
 void CompilerOutputPane::onLanguageChanged(int index) {
     if (index >= 0) {
         m_currentLanguage = m_languageCombo->itemData(index).value<Language>();
+        updateTitle();
         emit languageChanged(m_currentLanguage);
     }
 }
@@ -244,10 +252,23 @@ void CompilerOutputPane::onLanguageChanged(int index) {
 void CompilerOutputPane::onSyntaxChanged(int index) {
     if (index >= 0) {
         m_currentSyntax = m_syntaxCombo->itemData(index).value<SyntaxFlavor>();
+        updateTitle();
         emit syntaxChanged(m_currentSyntax);
     }
 }
 
-void CompilerOutputPane::onFlagsChanged() { emit flagsChanged(m_flagsInput->text()); }
+void CompilerOutputPane::onFlagsChanged() { 
+    updateTitle();
+    emit flagsChanged(m_flagsInput->text()); 
+}
 
 void CompilerOutputPane::onCloseClicked() { emit closeRequested(); }
+
+void CompilerOutputPane::updateTitle() {
+    QString lang = m_languageCombo->currentText();
+    QString comp = m_compilerCombo->currentText();
+    if (comp.isEmpty()) comp = "No Compiler Selected";
+    QString syn = m_syntaxCombo->currentText();
+    QString flags = m_flagsInput->text();
+    m_titleLabel->setText(QString("%1 | %2 | %3 | %4").arg(lang, comp, syn, flags));
+}

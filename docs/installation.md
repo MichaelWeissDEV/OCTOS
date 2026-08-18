@@ -55,8 +55,7 @@ cmake ..
 # Compile (use -j for parallel jobs)
 make -j$(nproc)
 
-# Optional: Install system-wide
-sudo make install
+
 ```
 
 ### Run OCTOS

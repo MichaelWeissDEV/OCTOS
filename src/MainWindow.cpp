@@ -221,7 +221,8 @@ void MainWindow::setupUi() {
         themeAction->setData(i);
         connect(themeAction, &QAction::triggered, this, [this, i]() { onChangeTheme(i); });
     }
-    menuBar()->addMenu(toolsMenu);
+
+
 
     QMenu* filtersMenu = new QMenu("Filters", this);
 
@@ -280,7 +281,7 @@ void MainWindow::setupUi() {
     connect(m_filterDemangle, &QAction::triggered, this, &MainWindow::onRefilterOutput);
     filtersMenu->addAction(m_filterDemangle);
 
-    menuBar()->addMenu(filtersMenu);
+
 
     QMenu* fileMenu = new QMenu("File", this);
     QAction* newAction = fileMenu->addAction("New");
@@ -315,6 +316,8 @@ void MainWindow::setupUi() {
     saveAction->setShortcut(Qt::CTRL | Qt::Key_S);
     connect(saveAction, &QAction::triggered, this, &MainWindow::onSave);
     menuBar()->addMenu(fileMenu);
+    menuBar()->addMenu(filtersMenu);
+    menuBar()->addMenu(toolsMenu);
 
     m_splitter = new QSplitter(Qt::Horizontal);
 
@@ -335,7 +338,7 @@ void MainWindow::setupUi() {
     sourceToolbarLayout->addWidget(sourceLabel);
     sourceToolbarLayout->addStretch();
 
-    m_highlightToggle = new QPushButton(" Off");
+    m_highlightToggle = new QPushButton("Highlight: Off");
     m_highlightToggle->setToolTip("Toggle highlighting: Off → Highlight All → Highlight Selection");
     m_highlightToggle->setStyleSheet(R"(
         QPushButton {
@@ -875,13 +878,13 @@ void MainWindow::onToggleHighlightMode() {
 
     switch (m_highlightMode) {
         case 0:
-            m_highlightToggle->setText(" Off");
+            m_highlightToggle->setText("Highlight: Off");
             break;
         case 1:
-            m_highlightToggle->setText(" All");
+            m_highlightToggle->setText("Highlight: All");
             break;
         case 2:
-            m_highlightToggle->setText(" Selection");
+            m_highlightToggle->setText("Highlight: Selection");
             break;
     }
 
