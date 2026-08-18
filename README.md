@@ -61,7 +61,7 @@ make -j$(nproc)
 
 ## Documentation
 
-**[📚 Read the official OCTOS Documentation here](https://octos.readthedocs.io/)** *(or visit the [project dashboard](https://app.readthedocs.org/projects/octos/))*
+**[📚 Read the official OCTOS Documentation here](https://octos.readthedocs.io/en/latest/)** *(or visit the [project dashboard](https://app.readthedocs.org/projects/octos/))*
 
 The complete documentation is built with MkDocs and hosted on Read the Docs. It includes:
 - Complete Installation & Quick Start Guides
