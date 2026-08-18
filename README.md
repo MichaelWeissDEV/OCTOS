@@ -5,6 +5,7 @@
   **Offline Compiler Explorer & Assembly Analyzer**
 
   [![Status](https://img.shields.io/badge/Status-Alpha%20%2F%20WIP-orange)](#project-status)
+  [![Documentation Status](https://readthedocs.org/projects/octos/badge/?version=latest)](https://octos.readthedocs.io/en/latest/?badge=latest)
   [![License](https://img.shields.io/badge/License-MIT-blue)](#license)
   [![C++](https://img.shields.io/badge/Language-C%2B%2B17-blue)](https://en.wikipedia.org/wiki/C%2B%2B)
   [![Qt6](https://img.shields.io/badge/Framework-Qt%206-green)](https://www.qt.io/)
@@ -60,11 +61,13 @@ make -j$(nproc)
 
 ## Documentation
 
-- [Installation Guide](docs/installation.md)
-- [Getting Started](docs/getting-started.md)
-- [User Guide](docs/user-guide/index.md)
-- [Compilers & Languages](docs/compilers/index.md)
-- [Development Guide](docs/development/index.md)
+**[📚 Read the official OCTOS Documentation here](https://octos.readthedocs.io/)** *(or visit the [project dashboard](https://app.readthedocs.org/projects/octos/))*
+
+The complete documentation is built with MkDocs and hosted on Read the Docs. It includes:
+- Complete Installation & Quick Start Guides
+- User Guide for interface and features
+- Compiler and Language support matrix
+- Architecture and Development instructions
 
 ## Project Status & Limitations
 
