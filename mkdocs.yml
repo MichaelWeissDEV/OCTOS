@@ -1,0 +1,51 @@
+site_name: OCTOS
+site_description: Offline Compiler Explorer & Assembly Analyzer
+repo_url: https://github.com/MichaelWeissDEV/OCTOS
+repo_name: MichaelWeissDEV/OCTOS
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.magiclink
+
+nav:
+  - Getting Started:
+    - Overview: index.md
+    - Installation: installation.md
+    - First Compilation: getting-started.md
+  - User Guide:
+    - Overview: user-guide/index.md
+    - Interface: user-guide/interface.md
+    - Comparing Compilers: user-guide/compiler-comparison.md
+    - Assembly View: user-guide/assembly-view.md
+    - Filters: user-guide/filters.md
+    - Compiler Manager: user-guide/compiler-manager.md
+  - Languages & Compilers:
+    - Compiler Support: compilers/index.md
+  - Development:
+    - Overview: development/index.md
+    - Architecture: development/architecture.md
+    - Language Strategies: development/language-strategies.md
+    - Docker Backend: development/docker-backend.md
+  - Reference:
+    - Keyboard Shortcuts: reference/keyboard-shortcuts.md
+    - Project Structure: reference/project-structure.md
+  - Troubleshooting: troubleshooting.md
+  - Limitations: limitations.md

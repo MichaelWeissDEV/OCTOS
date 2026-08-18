@@ -63,9 +63,6 @@ make -j$(nproc)
 ```bash
 # From build directory
 ./OCTOS
-
-# Or if installed system-wide
-OCTOS
 ```
 
 ---

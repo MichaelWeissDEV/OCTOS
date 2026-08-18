@@ -9,9 +9,9 @@ OCTOS relies on Docker images to run isolated compiler toolchains.
 | **C / C++** | Supported | Native Assembly | `gcc`, `clang` |
 | **Rust** | Supported | Native Assembly | `rust` |
 | **Java** | Supported | Bytecode (javap) | `eclipse-temurin`, `openjdk` |
-| **C#** | Supported | IL (Mono) | `mono` |
-| **Python** | Supported | Syntax Checking | `python` |
-| **Ada** | Unsupported | N/A | `gcc` (GNAT) |
+| **C#** | Supported/Partial | IL (Mono) | `mono` |
+| **Python** | Partial | Syntax Checking | `python` |
+| **Ada** | Planned | — | — |
 
 ## Implementation Details
 

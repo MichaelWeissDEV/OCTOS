@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - Unreleased
 
 ### Added
-- Ada language support with GNAT compiler
 - Assembly output for all supported languages
 - Docker-based containerized compilation
 - Multi-language snippet system
@@ -27,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Rust compilation with proper `--emit asm` flags
-- Ada compilation using objdump for assembly
 - Python syntax checking with py_compile
 - Java bytecode generation with javap
 - C/C++ error display in output pane
@@ -37,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Some edge cases in assembly filtering not yet handled
 - Windows support is experimental; WSL2 recommended
 - Limited testing on macOS
-- Ada assembly output generation is currently incomplete
 
 ## [0.1.0] - 2025-12-13
 

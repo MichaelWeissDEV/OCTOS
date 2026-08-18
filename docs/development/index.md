@@ -17,4 +17,4 @@ To add support for a new language:
 3. Register the strategy in `CompilerDriver`.
 4. Update the UI enums and documentation to reflect the new language.
 
-See the [Contributing Guide](../../CONTRIBUTING.md) for more details on submitting patches.
+See the [Contributing Guide](https://github.com/MichaelWeissDEV/OCTOS/blob/main/CONTRIBUTING.md) for more details on submitting patches.

@@ -30,8 +30,8 @@ mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Debug ..
 make -j4
 
-# Run tests (if available)
-make test
+# Tests
+# Automated tests are not yet available. See the roadmap for the planned test infrastructure.
 ```
 
 ## Code Style

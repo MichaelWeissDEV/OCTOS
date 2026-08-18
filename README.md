@@ -23,8 +23,8 @@ By utilizing Docker for isolated compilation environments, OCTOS ensures safe, r
 
 ## Major Features
 
-- **Local Compilation**: Analyze code offline without sending source files to external servers.
-- **Docker-based Backends**: Secure and reproducible builds using containerized compiler toolchains.
+- **Local Compilation**: OCTOS performs compilation locally and does not submit source code to a remote compilation service. Network access may be required to download compiler container images. Once required images are available locally, compilation can operate without a remote compilation backend.
+- **Docker-based Backends**: Isolated compiler toolchains using Docker containers, eliminating complex host configurations.
 - **Side-by-Side Comparison**: Compare output from different compiler versions or optimization flags.
 - **Assembly Visualization**: Advanced syntax highlighting, filtering, and annotation for multiple architectures.
 - **Multi-Language Support**: Support for a variety of languages, including native, bytecode, and IL compilation targets.
@@ -36,9 +36,9 @@ By utilizing Docker for isolated compilation environments, OCTOS ensures safe, r
 | **C / C++** | Supported | Native Assembly | GCC, Clang |
 | **Rust** | Supported | Native Assembly | rustc |
 | **Java** | Supported | Bytecode (javap) | javac |
-| **C#** | Supported | IL (Mono) | csc, mcs |
-| **Python** | Supported | Syntax Checking | py_compile |
-| **Ada** | Unsupported | N/A | (Implementation incomplete) |
+| **C#** | Supported/Partial | IL (Mono) | csc, mcs |
+| **Python** | Partial | Syntax Checking | py_compile |
+| **Ada** | Planned | — | — |
 
 ## Quick Start
 
@@ -73,7 +73,6 @@ make -j$(nproc)
 OCTOS is under active development. Current known limitations include:
 - Windows support relies on WSL2; macOS support is currently limited.
 - Docker is strictly required for the compilation backend.
-- Ada compilation is currently non-functional.
 - Assembly extraction relies on specific Docker image toolchains and may vary by image version.
 
 See the [Roadmap](ROADMAP.md) for planned improvements.
