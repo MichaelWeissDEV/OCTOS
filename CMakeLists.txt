@@ -12,24 +12,15 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
 set(SOURCES
     src/main.cpp
     src/MainWindow.cpp
-    src/CompilerDriver.cpp
-    src/CompilerDetector.cpp
     src/backend/DockerCompilerManager.cpp
     src/highlighters/AsmHighlighter.cpp
     src/highlighters/CppHighlighter.cpp
-    src/ui/CompilerSelectDialog.cpp
     src/ui/CompilerManagerDialog.cpp
     src/ui/CompilerOutputPane.cpp
     src/ui/Theme.cpp
     src/ui/ManageCompilersDialog.cpp
     src/ui/PythonInstallWizard.cpp
     src/ui/CompilerStatusWidget.cpp
-    src/ui/AsyncCompiler.cpp
-    src/strategies/CppStrategy.cpp
-    src/strategies/JavaStrategy.cpp
-    src/strategies/CSharpStrategy.cpp
-    src/strategies/PythonStrategy.cpp
-    src/strategies/RustStrategy.cpp
     src/managers/PackageManager.cpp
     src/managers/RecentFilesManager.cpp
     src/managers/SnippetManager.cpp
@@ -38,30 +29,20 @@ set(SOURCES
 
 set(HEADERS
     src/MainWindow.h
-    src/CompilerDriver.h
-    src/CompilerDetector.h
     src/backend/DockerCompilerManager.h
+    src/core/CompilerEnums.h
     src/highlighters/AsmHighlighter.h
     src/highlighters/CppHighlighter.h
-    src/ui/CompilerSelectDialog.h
     src/ui/CompilerManagerDialog.h
     src/ui/CompilerOutputPane.h
     src/ui/Theme.h
     src/ui/ManageCompilersDialog.h
     src/ui/PythonInstallWizard.h
     src/ui/CompilerStatusWidget.h
-    src/ui/AsyncCompiler.h
-    src/strategies/ILanguageStrategy.h
-    src/strategies/CppStrategy.h
-    src/strategies/JavaStrategy.h
-    src/strategies/CSharpStrategy.h
-    src/strategies/PythonStrategy.h
-    src/strategies/RustStrategy.h
     src/managers/PackageManager.h
     src/managers/RecentFilesManager.h
     src/managers/SnippetManager.h
     src/utils/AssemblyTextProcessor.h
-    src/ui/AsyncCompiler.h
 )
 
 set(RESOURCES
@@ -75,7 +56,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Gui Qt
 target_include_directories(${PROJECT_NAME} PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/backend
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/strategies
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/managers
     ${CMAKE_CURRENT_SOURCE_DIR}/src/highlighters

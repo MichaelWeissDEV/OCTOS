@@ -10,7 +10,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include "../CompilerDriver.h"
+#include "../core/CompilerEnums.h"
 
 class CodeEditor;
 class DockerCompilerManager;

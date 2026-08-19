@@ -13,7 +13,7 @@
 #include <QTimer>
 #include <memory>
 
-#include "CompilerDriver.h"
+#include "core/CompilerEnums.h"
 #include "backend/DockerCompilerManager.h"
 #include "highlighters/AsmHighlighter.h"
 #include "highlighters/CppHighlighter.h"
