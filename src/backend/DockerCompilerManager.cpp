@@ -258,35 +258,36 @@ void buildDockerArguments(const CompilationJob& job, QStringList& dockerArgs,
     
     // Language-specific handling
     if (job.language == "java") {
+        // Java is Experimental - we do simple compilation without user flags
+        // to avoid shell injection. User flags are intentionally ignored for security.
         QString publicClass = detectJavaPublicClass(job.sourceCode);
         if (publicClass.isEmpty()) {
             publicClass = "Main";
         }
         
-        // Build a safe command for javac + javap
-        QStringList safeFlags = userFlags;
-        QString compileCmd = QString("javac %1 /input/%2 -d /output 2>&1 && javap -c -v /output/%2.class").
-            arg(safeFlags.join(" "), publicClass);
+        // Use a simple, safe javac + javap command without user flags
+        QString compileCmd = QString("javac /input/%1 -d /output && javap -c -v /output/%1.class").
+            arg(publicClass);
         
         dockerArgs << "bash";
         dockerArgs << "-c";
         dockerArgs << compileCmd;
         
     } else if (job.language == "python") {
-        // Python: syntax checking
+        // Python: syntax checking - no user flags passed through
         dockerArgs << "python3";
         dockerArgs << "-m";
         dockerArgs << "py_compile";
         dockerArgs << ("/input/" + sourceFileName);
         
     } else if (job.language == "csharp") {
+        // C# is Experimental - ignore user flags for security
         dockerArgs << compilerCmd;
-        dockerArgs.append(userFlags);
         dockerArgs << ("/input/" + sourceFileName);
         
     } else if (job.language == "ada") {
+        // Ada is Planned - ignore user flags for security
         dockerArgs << compilerCmd;
-        dockerArgs.append(userFlags);
         dockerArgs << ("/input/" + sourceFileName);
         
     } else {

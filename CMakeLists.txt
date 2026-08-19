@@ -33,7 +33,6 @@ set(HEADERS
     src/MainWindow.h
     src/backend/DockerCompilerManager.h
     src/core/CompilerEnums.h
-    src/core/CompilationPlan.h
     src/highlighters/AsmHighlighter.h
     src/highlighters/CppHighlighter.h
     src/ui/CompilerManagerDialog.h
