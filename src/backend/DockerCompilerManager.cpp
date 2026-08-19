@@ -1,5 +1,6 @@
 #include "DockerCompilerManager.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -8,197 +9,328 @@
 #include <QMetaObject>
 #include <QMutexLocker>
 #include <QNetworkRequest>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QRunnable>
 #include <QThread>
+#include <QTextStream>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QUuid>
 #include <atomic>
 #include <memory>
 
-// Build Docker arguments as a QStringList (no shell involved)
-static void buildDockerArguments(const CompilationJob& job, QStringList& dockerArgs, 
-                                QTemporaryDir*& tempDir, QString& hostSourcePath) {
-    // Create a temporary directory for this job
-    tempDir = new QTemporaryDir();
-    if (!tempDir->isValid()) {
-        delete tempDir;
-        tempDir = nullptr;
+// Timeout constants
+constexpr int kDockerStartTimeoutMs = 5000;    // 5 seconds to start Docker process
+constexpr int kCompilationTimeoutMs = 30000;   // 30 seconds for compilation
+constexpr int kCleanupTimeoutMs = 10000;       // 10 seconds for cleanup operations
+
+namespace {
+
+// Helper function to detect public class name in Java source
+QString detectJavaPublicClass(const QString& sourceCode) {
+    // Match patterns like: public class Name, public final class Name, etc.
+    static const QRegularExpression javaClassRegex(
+        R"(\bpublic\s+(?:final\s+|abstract\s+|strictfp\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\s*)"
+    );
+    
+    QRegularExpressionMatch match = javaClassRegex.match(sourceCode);
+    if (match.hasMatch()) {
+        return match.captured(1);
+    }
+    
+    return QString();
+}
+
+// Helper function to split compiler arguments correctly
+QStringList splitCompilerArguments(const QString& flags) {
+    QStringList result;
+    QString currentArg;
+    bool inSingleQuote = false;
+    bool inDoubleQuote = false;
+    bool escaped = false;
+    
+    for (int i = 0; i < flags.size(); ++i) {
+        QChar c = flags[i];
+        
+        if (escaped) {
+            currentArg += c;
+            escaped = false;
+            continue;
+        }
+        
+        if (c == '\\') {
+            escaped = true;
+            currentArg += c;
+            continue;
+        }
+        
+        if (c == '\'' && !inDoubleQuote) {
+            inSingleQuote = !inSingleQuote;
+            continue;
+        }
+        
+        if (c == '"' && !inSingleQuote) {
+            inDoubleQuote = !inDoubleQuote;
+            continue;
+        }
+        
+        if ((c == ' ' || c == '\t' || c == '\n' || c == '\r') && 
+            !inSingleQuote && !inDoubleQuote) {
+            if (!currentArg.isEmpty()) {
+                result.append(currentArg);
+                currentArg.clear();
+            }
+            continue;
+        }
+        
+        currentArg += c;
+    }
+    
+    if (!currentArg.isEmpty()) {
+        result.append(currentArg);
+    }
+    
+    return result;
+}
+
+// Validate and sanitize user flags to prevent overriding OCTOS output
+QStringList sanitizeUserFlags(const QStringList& userFlags) {
+    QStringList sanitized;
+    bool skipNext = false;
+    
+    for (int i = 0; i < userFlags.size(); ++i) {
+        const QString& flag = userFlags[i];
+        
+        // Skip this argument if we're skipping the next one
+        if (skipNext) {
+            skipNext = false;
+            continue;
+        }
+        
+        // Check for output override attempts
+        if (flag == "-o" || flag == "--output") {
+            // Skip this flag and the next argument (the output path)
+            skipNext = true;
+            continue;
+        }
+        
+        // Check for flags that start with the output flag
+        if (flag.startsWith("-o=") || flag.startsWith("--output=")) {
+            continue;
+        }
+        
+        // Check for other potentially dangerous patterns
+        if (flag.contains(";") || flag.contains("|") || flag.contains("&") ||
+            flag.contains("$") || flag.contains("`") || flag.contains("(") ||
+            flag.contains(")") || flag.contains("{") || flag.contains("}")) {
+            continue;
+        }
+        
+        sanitized.append(flag);
+    }
+    
+    return sanitized;
+}
+
+// Build Docker arguments using the new plan-based approach
+void buildDockerArguments(const CompilationJob& job, QStringList& dockerArgs,
+                          QTemporaryDir*& inputDir, QTemporaryDir*& outputDir,
+                          QString& hostSourcePath, QString& hostOutputPath) {
+    // Create separate directories for input and output
+    inputDir = new QTemporaryDir();
+    outputDir = new QTemporaryDir();
+    
+    if (!inputDir->isValid() || !outputDir->isValid()) {
+        delete inputDir;
+        delete outputDir;
+        inputDir = nullptr;
+        outputDir = nullptr;
         return;
     }
-
-    // Write source code to temporary file
+    
+    // Determine file extension and source filename based on language
     QString extension;
-    QString compilerCmd;
     QString sourceFileName;
-
+    
     if (job.language == "c") {
         extension = ".c";
-        compilerCmd = "gcc";
         sourceFileName = "source.c";
     } else if (job.language == "cpp" || job.language == "c++") {
         extension = ".cpp";
-        compilerCmd = "g++";
         sourceFileName = "source.cpp";
     } else if (job.language == "rust") {
         extension = ".rs";
-        compilerCmd = "rustc";
         sourceFileName = "source.rs";
     } else if (job.language == "java") {
+        // For Java, try to detect the public class name
+        QString publicClass = detectJavaPublicClass(job.sourceCode);
+        if (publicClass.isEmpty()) {
+            publicClass = "Main";
+        }
         extension = ".java";
-        compilerCmd = "javac";
-        sourceFileName = "Source.java";
+        sourceFileName = publicClass + ".java";
     } else if (job.language == "python") {
         extension = ".py";
-        compilerCmd = "python3";
         sourceFileName = "source.py";
     } else if (job.language == "csharp") {
         extension = ".cs";
-        compilerCmd = "csc";
         sourceFileName = "Program.cs";
     } else if (job.language == "ada") {
         extension = ".adb";
-        compilerCmd = "gnatmake";
         sourceFileName = "source.adb";
     } else {
         extension = ".cpp";
-        compilerCmd = "g++";
         sourceFileName = "source.cpp";
     }
-
-    hostSourcePath = tempDir->path() + "/" + sourceFileName;
+    
+    // Write source code to input directory
+    hostSourcePath = inputDir->path() + "/" + sourceFileName;
     QFile sourceFile(hostSourcePath);
     if (sourceFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&sourceFile);
         out << job.sourceCode;
         sourceFile.close();
     } else {
-        delete tempDir;
-        tempDir = nullptr;
+        delete inputDir;
+        delete outputDir;
+        inputDir = nullptr;
+        outputDir = nullptr;
         return;
     }
-
-    // Handle image selection based on compiler
+    
+    hostOutputPath = outputDir->path();
+    
+    // Handle image selection
     QString dockerImage = job.dockerImage;
-    if (job.language == "ada" && !dockerImage.contains("gcc")) {
-        dockerImage = "gcc:latest";
+    
+    // Determine compiler command based on language and image
+    QString compilerCmd;
+    if (job.language == "c") {
+        compilerCmd = dockerImage.contains("clang") ? "clang" : "gcc";
+    } else if (job.language == "cpp" || job.language == "c++") {
+        compilerCmd = dockerImage.contains("clang") ? "clang++" : "g++";
+    } else if (job.language == "rust") {
+        compilerCmd = "rustc";
+    } else if (job.language == "java") {
+        compilerCmd = "bash";
+    } else if (job.language == "python") {
+        compilerCmd = "python3";
+    } else if (job.language == "csharp") {
+        compilerCmd = "csc";
+    } else if (job.language == "ada") {
+        compilerCmd = "gnatmake";
+    } else {
+        compilerCmd = "g++";
     }
-
-    // Handle clang image
-    if (dockerImage.contains("clang")) {
-        if (job.language == "cpp" || job.language == "c++") {
-            compilerCmd = "clang++";
-        } else if (job.language == "c") {
-            compilerCmd = "clang";
-        }
-    }
-
-    // Container name for cleanup
-    QString containerName = QString("octos_job_%1").arg(job.jobId);
-
+    
+    // Container name with PID for uniqueness
+    QString containerName = QString("octos_%1_%2").arg(QCoreApplication::applicationPid()).arg(job.jobId);
+    
     // Start building docker arguments
     dockerArgs << "run";
     dockerArgs << "--rm";
     dockerArgs << "--name";
     dockerArgs << containerName;
-
-    // Network isolation - default to none for security
-    bool useNetworkNone = true;
-    if (job.language == "csharp") {
-        useNetworkNone = false;
-    }
     
-    if (useNetworkNone) {
-        dockerArgs << "--network";
-        dockerArgs << "none";
-    }
-
-    // Mount the temporary directory as read-only
+    // Network isolation - default to none for security
+    // Only C# might need network, but we'll be conservative
+    dockerArgs << "--network";
+    dockerArgs << "none";
+    
+    // Mount input directory as read-only
     dockerArgs << "-v";
-    dockerArgs << (tempDir->path() + ":/workspace:ro");
+    dockerArgs << (inputDir->path() + ":/input:ro");
+    
+    // Mount output directory as writable
+    dockerArgs << "-v";
+    dockerArgs << (outputDir->path() + ":/output");
+    
+    // Set working directory to /output for the compiler
     dockerArgs << "-w";
-    dockerArgs << "/workspace";
+    dockerArgs << "/output";
+    
     dockerArgs << dockerImage;
-
-    // Parse and add compiler flags
-    QString flags = job.compilerFlags.trimmed();
-    QStringList flagList;
-    if (!flags.isEmpty()) {
-        flagList = flags.split(QRegularExpression(R"(\s+)"), Qt::SkipEmptyParts);
-    }
-
+    
+    // Parse and sanitize compiler flags
+    QStringList userFlags = splitCompilerArguments(job.compilerFlags.trimmed());
+    userFlags = sanitizeUserFlags(userFlags);
+    
     // Language-specific handling
     if (job.language == "java") {
-        // Java: compile then disassemble using bash inside container
+        QString publicClass = detectJavaPublicClass(job.sourceCode);
+        if (publicClass.isEmpty()) {
+            publicClass = "Main";
+        }
+        
+        // Build a safe command for javac + javap
+        QStringList safeFlags = userFlags;
+        QString compileCmd = QString("javac %1 /input/%2 -d /output 2>&1 && javap -c -v /output/%2.class").
+            arg(safeFlags.join(" "), publicClass);
+        
         dockerArgs << "bash";
         dockerArgs << "-c";
-        QString javaCmd = "javac ";
-        for (const QString& flag : flagList) {
-            // Escape any special characters in flags for the bash -c command
-            // Since this is inside the container, we control the environment
-            javaCmd += " " + flag;
-        }
-        javaCmd += " /workspace/Source.java && javap -c -v /workspace/Source 2>&1";
-        dockerArgs << javaCmd;
+        dockerArgs << compileCmd;
+        
     } else if (job.language == "python") {
         // Python: syntax checking
         dockerArgs << "python3";
         dockerArgs << "-m";
         dockerArgs << "py_compile";
-        dockerArgs << ("/workspace/" + sourceFileName);
+        dockerArgs << ("/input/" + sourceFileName);
+        
     } else if (job.language == "csharp") {
         dockerArgs << compilerCmd;
-        for (const QString& flag : flagList) {
-            dockerArgs << flag;
-        }
-        dockerArgs << ("/workspace/" + sourceFileName);
+        dockerArgs.append(userFlags);
+        dockerArgs << ("/input/" + sourceFileName);
+        
     } else if (job.language == "ada") {
         dockerArgs << compilerCmd;
-        for (const QString& flag : flagList) {
-            dockerArgs << flag;
-        }
-        dockerArgs << ("/workspace/" + sourceFileName);
+        dockerArgs.append(userFlags);
+        dockerArgs << ("/input/" + sourceFileName);
+        
     } else {
         // C/C++/Rust: compile to assembly
         dockerArgs << compilerCmd;
         
-        // Add -S flag if not present in user flags
-        bool hasS = false;
-        for (const QString& flag : flagList) {
-            if (flag == "-S") {
-                hasS = true;
-                break;
-            }
-        }
-        if (!hasS) {
+        if (job.language == "rust") {
+            // Rust specific flags
+            dockerArgs << "--emit";
+            dockerArgs << "asm";
+            // Note: Rust doesn't support -fno-asynchronous-unwind-tables
+        } else {
+            // C/C++ specific flags
             dockerArgs << "-S";
+            dockerArgs << "-fno-asynchronous-unwind-tables";
         }
-        
-        // Add -fno-asynchronous-unwind-tables for cleaner output
-        dockerArgs << "-fno-asynchronous-unwind-tables";
         
         // Add user flags
-        for (const QString& flag : flagList) {
-            dockerArgs << flag;
-        }
+        dockerArgs.append(userFlags);
         
-        dockerArgs << ("/workspace/" + sourceFileName);
+        dockerArgs << ("/input/" + sourceFileName);
         dockerArgs << "-o";
-        dockerArgs << "/workspace/output.s";
+        dockerArgs << "/output/output.s";
     }
 }
+
+// Clean up Docker container
+void cleanupContainer(const QString& containerName) {
+    QProcess::execute("docker", QStringList() << "kill" << containerName);
+    QProcess::execute("docker", QStringList() << "rm" << "-f" << containerName);
+}
+
+} // namespace
 
 class CompilationTask : public QRunnable {
    public:
     CompilationTask(const CompilationJob& job, DockerCompilerManager* owner)
-        : m_job(job), m_owner(owner), m_tempDir(nullptr) {
+        : m_job(job), m_owner(owner), m_inputDir(nullptr), m_outputDir(nullptr) {
         setAutoDelete(false);
     }
 
     ~CompilationTask() {
-        if (m_tempDir) {
-            delete m_tempDir;
-        }
+        delete m_inputDir;
+        delete m_outputDir;
     }
 
     void cancel() {
@@ -207,7 +339,8 @@ class CompilationTask : public QRunnable {
         if (m_process) {
             m_process->kill();
             // Clean up docker container
-            QString containerName = QString("octos_job_%1").arg(m_job.jobId);
+            QString containerName = QString("octos_%1_%2").arg(
+                QCoreApplication::applicationPid()).arg(m_job.jobId);
             QProcess::execute("docker", QStringList() << "kill" << containerName);
             QProcess::execute("docker", QStringList() << "rm" << "-f" << containerName);
         }
@@ -227,10 +360,11 @@ class CompilationTask : public QRunnable {
 
         QStringList dockerArgs;
         QString hostSourcePath;
+        QString hostOutputPath;
         
-        buildDockerArguments(m_job, dockerArgs, m_tempDir, hostSourcePath);
+        buildDockerArguments(m_job, dockerArgs, m_inputDir, m_outputDir, hostSourcePath, hostOutputPath);
         
-        if (!m_tempDir) {
+        if (!m_inputDir || !m_outputDir) {
             output.stderr_ = "Failed to create temporary workspace";
             dispatchResult(output);
             return;
@@ -256,50 +390,44 @@ class CompilationTask : public QRunnable {
         // Execute docker directly with argument list - NO SHELL
         process->start("docker", dockerArgs);
 
-        if (!process->waitForStarted()) {
-            output.stderr_ = "Failed to start Docker process";
+        if (!process->waitForStarted(kDockerStartTimeoutMs)) {
+            output.stderr_ = "Docker process could not be started.";
             cleanupProcess();
             dispatchResult(output);
             return;
         }
 
-        // Wait with timeout (30 seconds)
-        const int timeoutSeconds = 30;
-        const int intervalMs = 100;
-        int elapsedMs = 0;
-        
-        while (!process->waitForFinished(intervalMs)) {
-            elapsedMs += intervalMs;
-            if (elapsedMs >= timeoutSeconds * 1000) {
-                // Timeout
-                process->kill();
-                
-                // Clean up container
-                QString containerName = QString("octos_job_%1").arg(m_job.jobId);
-                QProcess::execute("docker", QStringList() << "kill" << containerName);
-                QProcess::execute("docker", QStringList() << "rm" << "-f" << containerName);
-                
-                output.stderr_ = "Compilation timed out after " + QString::number(timeoutSeconds) + " seconds";
-                output.exitCode = -2;
-                cleanupProcess();
-                dispatchResult(output);
-                return;
-            }
+        // Wait with timeout
+        if (!process->waitForFinished(kCompilationTimeoutMs)) {
+            // Timeout
+            process->kill();
             
-            if (m_cancelled.load(std::memory_order_acquire)) {
-                process->kill();
-                
-                // Clean up container
-                QString containerName = QString("octos_job_%1").arg(m_job.jobId);
-                QProcess::execute("docker", QStringList() << "kill" << containerName);
-                QProcess::execute("docker", QStringList() << "rm" << "-f" << containerName);
-                
-                output.stderr_ = "Compilation cancelled";
-                output.exitCode = -1;
-                cleanupProcess();
-                dispatchResult(output);
-                return;
-            }
+            // Clean up container
+            QString containerName = QString("octos_%1_%2").arg(
+                QCoreApplication::applicationPid()).arg(m_job.jobId);
+            cleanupContainer(containerName);
+            
+            output.stderr_ = "Compilation timed out after " + 
+                QString::number(kCompilationTimeoutMs / 1000) + " seconds";
+            output.exitCode = -2;
+            cleanupProcess();
+            dispatchResult(output);
+            return;
+        }
+        
+        if (m_cancelled.load(std::memory_order_acquire)) {
+            // Clean up container
+            QString containerName = QString("octos_%1_%2").arg(
+                QCoreApplication::applicationPid()).arg(m_job.jobId);
+            cleanupContainer(containerName);
+            
+            process->kill();
+            output.stderr_ = "Compilation cancelled";
+            output.exitCode = -1;
+            output.success = false;
+            cleanupProcess();
+            dispatchResult(output);
+            return;
         }
 
         // Read output
@@ -308,14 +436,58 @@ class CompilationTask : public QRunnable {
         output.exitCode = process->exitCode();
         output.success = (output.exitCode == 0) && !m_cancelled.load(std::memory_order_acquire);
 
-        // For C/C++/Rust, read the output file if docker command succeeded
+        // Clean up container
+        QString containerName = QString("octos_%1_%2").arg(
+            QCoreApplication::applicationPid()).arg(m_job.jobId);
+        cleanupContainer(containerName);
+
+        // For C/C++/Rust, read the output file if compilation succeeded
         if ((m_job.language == "c" || m_job.language == "cpp" || m_job.language == "c++" || 
-             m_job.language == "rust") && output.stdout_.isEmpty() && output.exitCode == 0) {
-            QString outputFilePath = m_tempDir->path() + "/output.s";
+             m_job.language == "rust") && output.exitCode == 0) {
+            QString outputFilePath = m_outputDir->path() + "/output.s";
             QFile outputFile(outputFilePath);
             if (outputFile.exists() && outputFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
                 output.stdout_ = QString::fromUtf8(outputFile.readAll());
                 outputFile.close();
+            } else if (output.stdout_.isEmpty() && !output.stderr_.isEmpty()) {
+                // If we didn't get the output file but there's stderr, use that
+                // This handles cases where the compiler output goes to stderr
+                output.stdout_ = output.stderr_;
+                output.stderr_.clear();
+            }
+        } else if (m_job.language == "java" && output.exitCode == 0) {
+            // For Java, the output should be from javap
+            // If stdout is empty but we had success, try to read any output files
+            if (output.stdout_.isEmpty()) {
+                // Try to find .class files and disassemble them
+                QDir outputDir(m_outputDir->path());
+                QStringList classFiles = outputDir.entryList(QStringList() << "*.class");
+                for (const QString& classFile : classFiles) {
+                    QString baseName = classFile.left(classFile.length() - 6); // Remove .class
+                    QString disassembleCmd = QString("javap -c -v /output/%1").arg(classFile);
+                    // Note: We can't run another docker command here easily
+                    // This is handled in the docker command itself
+                }
+            }
+        } else if (m_job.language == "python") {
+            // For Python, if exit code is 0, it means syntax validation succeeded
+            if (output.exitCode == 0) {
+                if (output.stdout_.isEmpty()) {
+                    output.stdout_ = "Python syntax validation succeeded.\n\nOCTOS currently does not generate native assembly for Python.";
+                }
+            } else {
+                // Python syntax error - show the actual error
+                if (output.stderr_.isEmpty() && !output.stdout_.isEmpty()) {
+                    output.stderr_ = output.stdout_;
+                    output.stdout_.clear();
+                }
+            }
+        } else if (m_job.language == "csharp" || m_job.language == "ada") {
+            // For C# and Ada, if we get output, use it
+            // These are experimental/planned
+            if (output.stdout_.isEmpty() && !output.stderr_.isEmpty()) {
+                output.stdout_ = output.stderr_;
+                output.stderr_.clear();
             }
         }
 
@@ -327,10 +499,6 @@ class CompilationTask : public QRunnable {
             output.success = false;
         }
 
-        // Clean up container
-        QString containerName = QString("octos_job_%1").arg(m_job.jobId);
-        QProcess::execute("docker", QStringList() << "rm" << "-f" << containerName);
-        
         cleanupProcess();
         dispatchResult(output);
     }
@@ -354,7 +522,8 @@ class CompilationTask : public QRunnable {
     std::atomic_bool m_cancelled{false};
     QMutex m_processMutex;
     std::unique_ptr<QProcess> m_process;
-    QTemporaryDir* m_tempDir;
+    QTemporaryDir* m_inputDir;
+    QTemporaryDir* m_outputDir;
 };
 
 DockerCompilerManager::DockerCompilerManager(QObject* parent)
@@ -391,9 +560,8 @@ QString DockerCompilerManager::getCategoryRegistry(CompilerCategory category) co
     switch (category) {
         case CompilerCategory::Cpp:
         case CompilerCategory::C:
-            return "library/gcc";
         case CompilerCategory::Clang:
-            return "silkeh/clang";
+            return "library/gcc";
         case CompilerCategory::Java:
             return "library/openjdk";
         case CompilerCategory::Python:
@@ -532,7 +700,7 @@ void DockerCompilerManager::pullImage(const QString& imageName) {
 
     m_currentPullProcess->start("docker", QStringList() << "pull" << imageName);
 
-    if (!m_currentPullProcess->waitForStarted()) {
+    if (!m_currentPullProcess->waitForStarted(kDockerStartTimeoutMs)) {
         emit pullFinished(imageName, false, "Failed to start Docker pull");
         delete m_currentPullProcess;
         m_currentPullProcess = nullptr;
@@ -590,7 +758,7 @@ void DockerCompilerManager::onPullProcessFinished(int exitCode, QProcess::ExitSt
 void DockerCompilerManager::removeImage(const QString& imageName) {
     QProcess process;
     process.start("docker", QStringList() << "rmi" << imageName);
-    process.waitForFinished();
+    process.waitForFinished(kCleanupTimeoutMs);
 
     refreshInstalledImages();
 }
@@ -606,7 +774,7 @@ void DockerCompilerManager::refreshInstalledImages() {
     QProcess process;
     process.start("docker", QStringList()
                                 << "images" << "--format" << "{{.Repository}}:{{.Tag}}|{{.Size}}");
-    process.waitForFinished();
+    process.waitForFinished(kCleanupTimeoutMs);
 
     QString output = QString::fromUtf8(process.readAllStandardOutput());
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
@@ -620,7 +788,7 @@ void DockerCompilerManager::refreshInstalledImages() {
 
         if (fullName.contains("gcc") || fullName.contains("clang") ||
             fullName.contains("openjdk") || fullName.contains("python") ||
-            fullName.contains("rust")) {
+            fullName.contains("rust") || fullName.contains("mono")) {
             DockerImage image;
             QStringList nameParts = fullName.split(':');
             if (nameParts.size() == 2) {
@@ -639,7 +807,7 @@ void DockerCompilerManager::refreshInstalledImages() {
 bool DockerCompilerManager::isImageInstalled(const QString& imageName) {
     QProcess process;
     process.start("docker", QStringList() << "images" << "-q" << imageName);
-    process.waitForFinished();
+    process.waitForFinished(kCleanupTimeoutMs);
 
     QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
     return !output.isEmpty();

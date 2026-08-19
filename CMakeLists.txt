@@ -7,6 +7,8 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+option(BUILD_TESTING "Build tests" OFF)
+
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
 
 set(SOURCES
@@ -31,6 +33,7 @@ set(HEADERS
     src/MainWindow.h
     src/backend/DockerCompilerManager.h
     src/core/CompilerEnums.h
+    src/core/CompilationPlan.h
     src/highlighters/AsmHighlighter.h
     src/highlighters/CppHighlighter.h
     src/ui/CompilerManagerDialog.h
@@ -62,3 +65,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/highlighters
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
 )
+
+# Include tests if enabled
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    # Test infrastructure will be added in a future commit
+    # add_subdirectory(tests)
+    message(STATUS "Tests are planned but not yet implemented")
+endif()
