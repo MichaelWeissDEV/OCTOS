@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(OCTOS VERSION 0.3.0 LANGUAGES CXX)
+project(OCTOS VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +37,8 @@ set(OCTOS_CORE_SOURCES
     src/managers/RecentFilesManager.cpp
     src/managers/SnippetManager.cpp
     src/utils/AssemblyTextProcessor.cpp
+    src/utils/AssemblyDiffProcessor.cpp
+    src/utils/OpcodeReference.cpp
 )
 
 set(OCTOS_CORE_HEADERS
@@ -65,6 +67,8 @@ set(OCTOS_CORE_HEADERS
     src/managers/RecentFilesManager.h
     src/managers/SnippetManager.h
     src/utils/AssemblyTextProcessor.h
+    src/utils/AssemblyDiffProcessor.h
+    src/utils/OpcodeReference.h
 )
 
 add_library(octos_core STATIC ${OCTOS_CORE_SOURCES} ${OCTOS_CORE_HEADERS})
@@ -89,18 +93,24 @@ set(OCTOS_UI_SOURCES
     src/MainWindow.cpp
     src/ui/CompilerOutputPane.cpp
     src/ui/CompilerManagerDialog.cpp
+    src/ui/DiffDialog.cpp
     src/ui/Theme.cpp
     src/highlighters/CppHighlighter.cpp
     src/highlighters/AsmHighlighter.cpp
+    src/highlighters/RustHighlighter.cpp
+    src/highlighters/PythonHighlighter.cpp
 )
 
 set(OCTOS_UI_HEADERS
     src/MainWindow.h
     src/ui/CompilerOutputPane.h
     src/ui/CompilerManagerDialog.h
+    src/ui/DiffDialog.h
     src/ui/Theme.h
     src/highlighters/CppHighlighter.h
     src/highlighters/AsmHighlighter.h
+    src/highlighters/RustHighlighter.h
+    src/highlighters/PythonHighlighter.h
 )
 
 set(OCTOS_RESOURCES

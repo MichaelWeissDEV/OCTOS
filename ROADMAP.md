@@ -15,10 +15,10 @@ This document outlines the planned future work for OCTOS.
 ## Upcoming Releases
 
 ### Version 0.4.0 (Advanced Assembly Analysis & UX)
-- **Assembly Diff View**: Side-by-side graphical diff comparison highlighting instruction differences across compiler versions or optimization levels.
-- **Architectural Tooltips**: Hover over x86/ARM/RISC-V assembly mnemonics to view instruction latency, throughput, and reference documentation.
-- **Enhanced Syntax Highlighters**: Dedicated highlighters for Rust, Python, and Java in the source editor.
-- **Multi-File / Multi-Source Support**: Support compiling projects with header files and small modules.
+- [x] **Assembly Diff View**: Side-by-side graphical diff comparison highlighting instruction differences across compiler versions or optimization levels.
+- [x] **Architectural Tooltips**: Hover over x86/ARM assembly mnemonics to view instruction summary, flags affected, and syntax examples.
+- [x] **Enhanced Syntax Highlighters**: Dedicated highlighters for Rust and Python in the source editor with dynamic language detection.
+- [ ] **Multi-File / Multi-Source Support**: Support compiling projects with header files and small modules.
 
 ### Version 0.5.0 (Extended Toolchains & Architectures)
 - **Ada GNAT Support**: Complete integration and verification of the Ada GNAT compilation pipeline.

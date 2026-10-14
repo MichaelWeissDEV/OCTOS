@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-14
+
+### Added
+- **Assembly Diff View (`DiffDialog` & `AssemblyDiffProcessor`)**:
+  - Side-by-side assembly comparison view with LCS-based line matching.
+  - Visual addition, deletion, and line numbering cues for compiler output comparisons.
+  - Diff view action button automatically enabled when 2+ compiler panes are open.
+- **Architectural Opcode Tooltips (`OpcodeReference`)**:
+  - Embedded instruction reference dictionary for x86 and ARM64 instructions.
+  - Rich HTML tooltips on hovering over assembly mnemonics showing instruction summary, flags affected, and syntax examples.
+- **Multi-Language Source Syntax Highlighting**:
+  - Added dedicated syntax highlighters for Rust (`RustHighlighter`) and Python (`PythonHighlighter`).
+  - Dynamic switching of source syntax highlighting based on file extension and selected compiler pane language.
+- **Automated Unit Tests**:
+  - Added `test_diff_and_highlighters` suite validating diff computation, opcode reference queries, and language highlighters.
+
 ## [0.3.0] - 2026-10-14
 
 ### Added

@@ -5,7 +5,7 @@
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("OCTOS");
-    app.setApplicationVersion("0.3.0");
+    app.setApplicationVersion("0.4.0");
 
     // Set application icon
     QIcon appIcon(":/assets/OCTOS.png");

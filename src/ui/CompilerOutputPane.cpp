@@ -198,6 +198,7 @@ void CompilerOutputPane::setupUi() {
 
     m_editor = new CodeEditor();
     m_editor->setReadOnly(true);
+    m_editor->enableOpcodeTooltips(true);
 
     QPalette palette = m_editor->palette();
     palette.setColor(QPalette::Base, QColor("#1e1e1e"));

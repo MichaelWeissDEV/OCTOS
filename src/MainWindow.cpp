@@ -25,13 +25,18 @@
 #include <QSplitter>
 #include <QTextDocument>
 #include <QTextEdit>
+#include <QToolTip>
 #include <QToolBar>
 #include <QVBoxLayout>
 
 #include "core/AppSettings.h"
+#include "highlighters/RustHighlighter.h"
+#include "highlighters/PythonHighlighter.h"
 #include "managers/RecentFilesManager.h"
 #include "managers/SnippetManager.h"
+#include "utils/OpcodeReference.h"
 #include "strategies/LanguageStrategyRegistry.h"
+#include "ui/DiffDialog.h"
 #include "ui/Theme.h"
 
 CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
@@ -73,6 +78,34 @@ void CodeEditor::updateLineNumberArea(const QRect& rect, int dy) {
         m_lineNumberArea->update(0, rect.y(), m_lineNumberArea->width(), rect.height());
 
     if (rect.contains(viewport()->rect())) updateLineNumberAreaWidth(0);
+}
+
+void CodeEditor::enableOpcodeTooltips(bool enable) {
+    m_opcodeTooltipsEnabled = enable;
+    setMouseTracking(enable);
+    if (viewport()) {
+        viewport()->setMouseTracking(enable);
+    }
+}
+
+bool CodeEditor::event(QEvent* event) {
+    if (m_opcodeTooltipsEnabled && event->type() == QEvent::ToolTip) {
+        auto* helpEvent = static_cast<QHelpEvent*>(event);
+        QTextCursor cursor = cursorForPosition(helpEvent->pos());
+        cursor.select(QTextCursor::WordUnderCursor);
+        QString word = cursor.selectedText().trimmed().toLower();
+
+        if (!word.isEmpty() && OpcodeReference::instance().hasOpcode(word)) {
+            OpcodeInfo info = OpcodeReference::instance().getOpcodeInfo(word);
+            QToolTip::showText(helpEvent->globalPos(), info.toFormattedTooltip(), this);
+            return true;
+        } else {
+            QToolTip::hideText();
+            event->ignore();
+            return true;
+        }
+    }
+    return QPlainTextEdit::event(event);
 }
 
 void CodeEditor::keyPressEvent(QKeyEvent* event) {
@@ -365,6 +398,29 @@ void MainWindow::setupUi() {
     connect(m_addPaneButton, &QPushButton::clicked, this, &MainWindow::onAddComparisonPane);
     sourceToolbarLayout->addWidget(m_addPaneButton);
 
+    m_compareDiffButton = new QPushButton("Diff View");
+    m_compareDiffButton->setToolTip("View side-by-side assembly diff between panels");
+    m_compareDiffButton->setEnabled(false);
+    m_compareDiffButton->setStyleSheet(R"(
+        QPushButton {
+            padding: 4px 12px;
+            background-color: #2e6c52;
+            border: none;
+            border-radius: 3px;
+            color: white;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #388463;
+        }
+        QPushButton:disabled {
+            background-color: #333333;
+            color: #777777;
+        }
+    )");
+    connect(m_compareDiffButton, &QPushButton::clicked, this, &MainWindow::onCompareDiff);
+    sourceToolbarLayout->addWidget(m_compareDiffButton);
+
     m_closeOthersButton = new QPushButton("Close Others");
     m_closeOthersButton->setStyleSheet(R"(
         QPushButton {
@@ -392,7 +448,7 @@ void MainWindow::setupUi() {
     m_inputEditor->setFont(monoFont);
     m_inputEditor->setLineWrapMode(QPlainTextEdit::NoWrap);
     m_inputEditor->setTabStopDistance(40);
-    m_cppHighlighter = new CppHighlighter(m_inputEditor->document());
+    updateSourceHighlighter(Language::Cpp);
 
     sourceLayout->addWidget(m_inputEditor);
 
@@ -459,6 +515,9 @@ void MainWindow::onAddComparisonPane() {
     if (m_outputPanes.size() > 1) {
         m_outputPanes.first()->setCloseButtonVisible(true);
     }
+    if (m_compareDiffButton) {
+        m_compareDiffButton->setEnabled(m_outputPanes.size() >= 2);
+    }
 
     QList<int> sizes;
     int totalWidth = m_outputSplitter->width();
@@ -484,6 +543,9 @@ void MainWindow::onCloseOtherPanes() {
     if (!m_outputPanes.isEmpty()) {
         m_outputPanes.first()->setCloseButtonVisible(false);
     }
+    if (m_compareDiffButton) {
+        m_compareDiffButton->setEnabled(false);
+    }
 }
 
 void MainWindow::onRemovePane(CompilerOutputPane* pane) {
@@ -502,6 +564,9 @@ void MainWindow::onRemovePane(CompilerOutputPane* pane) {
 
         if (m_outputPanes.size() == 1) {
             m_outputPanes.first()->setCloseButtonVisible(false);
+        }
+        if (m_compareDiffButton) {
+            m_compareDiffButton->setEnabled(m_outputPanes.size() >= 2);
         }
 
         pane->deleteLater();
@@ -569,9 +634,42 @@ QStringList MainWindow::getCompilersForLanguage(Language lang) {
     return filtered;
 }
 
+void MainWindow::updateSourceHighlighter(Language lang) {
+    if (m_sourceHighlighter) {
+        delete m_sourceHighlighter;
+        m_sourceHighlighter = nullptr;
+    }
+
+    if (!m_inputEditor) {
+        return;
+    }
+
+    switch (lang) {
+        case Language::Rust:
+            m_sourceHighlighter = new RustHighlighter(m_inputEditor->document());
+            break;
+        case Language::Python:
+            m_sourceHighlighter = new PythonHighlighter(m_inputEditor->document());
+            break;
+        case Language::Cpp:
+        case Language::C:
+        case Language::Java:
+        case Language::CSharp:
+        case Language::Ada:
+        default:
+            m_sourceHighlighter = new CppHighlighter(m_inputEditor->document());
+            break;
+    }
+}
+
 void MainWindow::onPaneLanguageChanged(Language lang, CompilerOutputPane* pane) {
     QStringList compilers = getCompilersForLanguage(lang);
     pane->setCompilerList(compilers);
+
+    // If the primary pane (first pane) changed language, adapt the source highlighter
+    if (!m_outputPanes.isEmpty() && m_outputPanes.first() == pane) {
+        updateSourceHighlighter(lang);
+    }
 }
 
 void MainWindow::updateCompilerLists() { refreshDockerCompilerList(); }
@@ -1057,4 +1155,24 @@ QColor MainWindow::getHighlightColor(int index, int total) {
     }
     float hue = static_cast<float>(index) / static_cast<float>(total);
     return QColor::fromHsvF(hue, 0.6, 0.9, 0.3);
+}
+
+void MainWindow::onCompareDiff() {
+    if (m_outputPanes.size() < 2) {
+        return;
+    }
+
+    CompilerOutputPane* paneA = m_outputPanes[0];
+    CompilerOutputPane* paneB = m_outputPanes[1];
+
+    QString nameA = QString("Pane 1 (%1 - %2)")
+                        .arg(paneA->getSelectedCompiler(), paneA->getCompilerFlags());
+    QString nameB = QString("Pane 2 (%1 - %2)")
+                        .arg(paneB->getSelectedCompiler(), paneB->getCompilerFlags());
+
+    QString asmA = paneA->getEditor()->toPlainText();
+    QString asmB = paneB->getEditor()->toPlainText();
+
+    DiffDialog dialog(nameA, asmA, nameB, asmB, this);
+    dialog.exec();
 }

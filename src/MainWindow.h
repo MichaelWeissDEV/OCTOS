@@ -35,10 +35,12 @@ public:
     explicit CodeEditor(QWidget* parent = nullptr);
     void lineNumberAreaPaintEvent(QPaintEvent* event);
     int lineNumberAreaWidth();
+    void enableOpcodeTooltips(bool enable = true);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    bool event(QEvent* event) override;
 
 private slots:
     void updateLineNumberAreaWidth(int);
@@ -47,6 +49,7 @@ private slots:
 
 private:
     LineNumberArea* m_lineNumberArea;
+    bool m_opcodeTooltipsEnabled{false};
 };
 
 class LineNumberArea : public QWidget {
@@ -94,6 +97,7 @@ private slots:
     void onSourceCursorPositionChanged();
     void onRefilterOutput();
     void onDocumentModificationChanged(bool modified);
+    void onCompareDiff();
 
 private:
     void setupUi();
@@ -110,11 +114,14 @@ private:
     void applyHighlighting();
     QColor getHighlightColor(int index, int total);
 
+    void updateSourceHighlighter(Language lang);
+
     CodeEditor* m_inputEditor{nullptr};
     QWidget* m_sourceEditorContainer{nullptr};
     QSplitter* m_splitter{nullptr};
     QSplitter* m_outputSplitter{nullptr};
     QPushButton* m_addPaneButton{nullptr};
+    QPushButton* m_compareDiffButton{nullptr};
     QPushButton* m_closeOthersButton{nullptr};
     QPushButton* m_highlightToggle{nullptr};
 
@@ -138,7 +145,7 @@ private:
     QTimer* m_debounceTimer{nullptr};
     DockerCompilerManager* m_dockerManager{nullptr};
     QVector<AsmHighlighter*> m_asmHighlighters;
-    CppHighlighter* m_cppHighlighter{nullptr};
+    QSyntaxHighlighter* m_sourceHighlighter{nullptr};
     RecentFilesManager m_recentFilesManager;
     SnippetManager m_snippetManager;
     ThemeType m_currentTheme{ThemeType::Dark};
