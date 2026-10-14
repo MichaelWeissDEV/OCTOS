@@ -2,29 +2,24 @@
 
 This document outlines the planned future work for OCTOS.
 
-## Current Release: 0.3.0 (Stabilization & Core Foundation)
-- [x] Decouple core logic into `octos_core` library
-- [x] Automated test suite integrated via CTest and Qt Test
-- [x] Strategy-based compiler driver architecture (`ILanguageStrategy`)
-- [x] Security-hardened Docker execution sandbox (`--network none`, resource limits, dropped capabilities, no-new-privileges)
-- [x] Revision-aware job management with automatic invalidation and cancellation
-- [x] Fixed language-specific compilation pipelines (GCC, Clang, Rust, Java, Python)
-- [x] Full document state tracking (Save, Save As, dirty tracking, recent files)
-- [x] Centralized persistent settings (`AppSettings`)
+## Current Release: 0.4.1 (Critical Stabilization & Foundations for 0.5.0)
+- [x] **Concurrency & Process Safety**: Stack-allocated `QProcess` per worker thread, lock-free atomic cancellation, leak-free container removal without deadlocks.
+- [x] **Deterministic Shutdown Protocol**: Safe 6-step shutdown sequence preventing use-after-free or zombie tasks.
+- [x] **Stale Result Invalidation**: Dual revision + pane-specific Job ID tracking with queue coalescing.
+- [x] **Docker Security & Resource Budgeting**: Removed 0777 permissions, UID/GID non-root execution, bounded streaming buffers (5MB) for stdout/stderr, strict settings validation.
+- [x] **Scalable Myers Diff**: Sub-millisecond to low-millisecond line diffing up to 50k+ lines, line interning, unified patch export, and GUI diff controls.
+- [x] **Separated Opcode Reference**: Independent x86-64 and ARM64 instruction databases with robust token filtering and viewport event routing.
+- [x] **Compiler Registry & Async Docker Manager**: Explicit metadata, strict language-image pairing, asynchronous image discovery, and safe deletion.
+- [x] **0.5.0 Core Foundations**: `CompilationArtifact`, `AssemblyParser` (functions, basic blocks, control flow), and `WorkspaceModel` (multi-file JSON workspace).
 
 ## Upcoming Releases
 
-### Version 0.4.0 (Advanced Assembly Analysis & UX)
-- [x] **Assembly Diff View**: Side-by-side graphical diff comparison highlighting instruction differences across compiler versions or optimization levels.
-- [x] **Architectural Tooltips**: Hover over x86/ARM assembly mnemonics to view instruction summary, flags affected, and syntax examples.
-- [x] **Enhanced Syntax Highlighters**: Dedicated highlighters for Rust and Python in the source editor with dynamic language detection.
-- [ ] **Multi-File / Multi-Source Support**: Support compiling projects with header files and small modules.
-
-### Version 0.5.0 (Extended Toolchains & Architectures)
-- **Ada GNAT Support**: Complete integration and verification of the Ada GNAT compilation pipeline.
-- **Go and Zig Support**: Native assembly extraction for Go (`go build -gcflags -S`) and Zig (`zig build-exe -femit-bin`).
-- **Cross-Compilation Targets**: ARM64, RISC-V, and AVR cross-compiler container images with simulated instruction output.
-- **LLVM IR / Tree Visualization**: View LLVM Intermediate Representation and compiler optimization passes.
+### Version 0.5.0 (Structured Artifacts, Assembly AST & Multi-File Workspaces)
+- [x] Core models (`WorkspaceModel`, `AssemblyParser`, `CompilationArtifact`) implemented in `octos_core`
+- [ ] Multi-file workspace UI (Project Tree, Header/Source tab management, CMake/Makefile generation)
+- [ ] Control flow graph (CFG) visualizer for assembly basic blocks
+- [ ] LLVM IR extraction and viewer alongside assembly output
+- [ ] Complete integration and verification of Ada GNAT and C# Mono container pipelines
 
 ### Version 0.6.0 (Packaging & Platform Polish)
 - **Platform Packaging**: Official Linux AppImage/Flatpak, macOS `.dmg`, and native Windows installers.

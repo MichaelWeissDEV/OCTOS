@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(OCTOS VERSION 0.4.0 LANGUAGES CXX)
+project(OCTOS VERSION 0.4.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,9 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network)
 # Core library (business logic, strategies, docker backend, job management, settings)
 set(OCTOS_CORE_SOURCES
     src/core/AppSettings.cpp
+    src/core/CompilerRegistry.cpp
+    src/core/WorkspaceModel.cpp
+    src/parser/AssemblyParser.cpp
     src/strategies/StrategyUtils.cpp
     src/strategies/GccStrategy.cpp
     src/strategies/ClangStrategy.cpp
@@ -31,6 +34,7 @@ set(OCTOS_CORE_SOURCES
     src/strategies/AdaStrategy.cpp
     src/strategies/LanguageStrategyRegistry.cpp
     src/backend/DockerExecutionBackend.cpp
+    src/backend/DockerExecutionConfig.cpp
     src/backend/MockExecutionBackend.cpp
     src/backend/JobManager.cpp
     src/backend/DockerCompilerManager.cpp
@@ -44,10 +48,15 @@ set(OCTOS_CORE_SOURCES
 set(OCTOS_CORE_HEADERS
     src/core/CompilerEnums.h
     src/core/Diagnostic.h
+    src/core/CompilationArtifact.h
     src/core/CompilationRequest.h
     src/core/CompilationResult.h
     src/core/CompilerDefinition.h
+    src/core/CompilerRegistry.h
+    src/core/WorkspaceModel.h
     src/core/AppSettings.h
+    src/parser/AssemblyModel.h
+    src/parser/AssemblyParser.h
     src/strategies/ILanguageStrategy.h
     src/strategies/StrategyUtils.h
     src/strategies/GccStrategy.h
@@ -81,6 +90,7 @@ target_link_libraries(octos_core PUBLIC
 target_include_directories(octos_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/parser
     ${CMAKE_CURRENT_SOURCE_DIR}/src/strategies
     ${CMAKE_CURRENT_SOURCE_DIR}/src/backend
     ${CMAKE_CURRENT_SOURCE_DIR}/src/managers

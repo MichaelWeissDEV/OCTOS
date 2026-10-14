@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-14
+
+### Added
+- **Myers Assembly Diff Processor**:
+  - Scalable $O(ND)$ Myers diff algorithm replacing the $O(NM)$ full LCS matrix; handles 50,000+ lines in under 60ms.
+  - Line interning, common prefix/suffix trimming, configurable step budgets, and cancellation support.
+  - Configurable normalization: whitespace suppression, comment stripping, and label normalization.
+  - Unified diff patch generation with export to `.patch` file or clipboard.
+  - Diff view improvements: interactive pane selector (Pane A vs Pane B), divergent artifact warning banner, diff row search with forward/backward navigation, and "Show Only Differences" toggle.
+- **Architecture-Separated Opcode Reference**:
+  - Disjoint opcode dictionaries for x86-64 and ARM64.
+  - Strict mnemonic token extraction ignoring operands, labels, directives, and comments.
+  - Viewport event filter in `CodeEditor` ensuring reliable `QEvent::ToolTip` delivery on Qt 6.
+- **Compiler Registry & Modernized Docker Manager**:
+  - Central `CompilerRegistry` with explicit compiler metadata, syntax flavors, artifact types, and language compatibility validation.
+  - Asynchronous Docker daemon reachability checking and non-blocking image inventory.
+  - Safe image management protecting unmanaged user images from accidental deletion.
+- **Technical Foundations for 0.5.0**:
+  - **Structured Compilation Artifacts (`CompilationArtifact`)**: First-class artifact model supporting Assembly, LLVM IR, Bytecode, CIL, and diagnostics with size and MIME tracking.
+  - **Assembly Parser (`AssemblyParser`)**: Parsing of x86-64 assembly into structured functions, basic blocks, jump links, and categorized operands.
+  - **Multi-File Workspace Model (`WorkspaceModel`)**: Project workspace data model supporting multiple source files, compiler profiles, build targets, and JSON persistence (`octos-project-v1`).
+- **Comprehensive Unit & Integration Test Suites**:
+  - Added `test_parser_and_workspace` validating assembly parsing, basic blocks, frequency counting, and workspace JSON round-trip.
+  - Added end-to-end multi-language test slots in `test_docker_integration` with safe Docker-offline detection.
+  - Automated offscreen platform rendering (`QT_QPA_PLATFORM=offscreen`) in GitHub Actions CI.
+
+### Fixed & Stabilized
+- **Thread Safety in Compilation Process Execution**:
+  - Replaced cross-thread `QProcess` pointer manipulation with thread-confined worker stack processes.
+  - Lockless cancellation signalling via atomic flags; container cleanup via `docker kill`/`rm` without holding internal backend mutexes.
+- **Deterministic Shutdown Protocol**:
+  - Guaranteed orderly shutdown: new job rejection, queue clearing, cancellation signalling, container cleanup, and bounded worker thread synchronization.
+- **Stale Compilation Result Discarding**:
+  - Track both document revision and per-pane Job IDs to eliminate race conditions from rapid flag toggling or recompilations.
+  - Coalescing job submission queue that cancels obsolete queued or running tasks immediately.
+- **Docker Security & Host Isolation**:
+  - Removed world-writable permissions (`0777`) on temp directories; enforced strict `0750` permissions with UID/GID container user mapping.
+  - Streaming bounded buffers for stdout/stderr preventing host memory exhaustion on huge compiler output.
+  - Rigorous input validation for Docker resource limits (memory, CPU, PID bounds) synchronized from `AppSettings`.
+
 ## [0.4.0] - 2026-10-14
 
 ### Added

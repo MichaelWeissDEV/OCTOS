@@ -4,7 +4,7 @@
   # OCTOS
   **Offline Compiler Explorer & Assembly Analyzer**
 
-  [![Status](https://img.shields.io/badge/Status-v0.3.0%20Stabilized-brightgreen)](#project-status)
+  [![Status](https://img.shields.io/badge/Status-v0.4.1%20Stabilized-brightgreen)](#project-status)
   [![Documentation Status](https://readthedocs.org/projects/octos/badge/?version=latest)](https://octos.readthedocs.io/en/latest/)
   [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
   [![C++](https://img.shields.io/badge/Language-C%2B%2B17-blue)](https://en.wikipedia.org/wiki/C%2B%2B)
@@ -26,12 +26,14 @@ By utilizing containerized compilers, OCTOS eliminates complicated host-system t
 
 - **Isolated Local Compilation**: Compiles locally inside dedicated Docker containers without transmitting source code to external servers.
 - **Side-by-Side Comparison**: Open multiple compiler panes to compare optimization flags (`-O0`, `-O1`, `-O2`, `-O3`, `-Os`), different compiler versions, or syntax flavors (`Intel` vs `AT&T`).
+- **High-Performance Assembly Diff**: Scalable Myers diff with prefix/suffix trimming, normalization, row jump navigation, and `.patch` unified diff export.
+- **Opcode Reference & Analysis**: Interactive x86-64 and ARM64 instruction tooltips with flags and syntax breakdown.
 - **Decoupled Architecture**: Modular `octos_core` library separating language compilation strategies, security-hardened Docker backends, and revision-aware job scheduling.
-- **Robust Job Lifecycle**: Concurrency-safe compilation queue with automatic cancellation of obsolete jobs, debounce timers, timeouts, and leak-free container cleanup.
+- **Robust Job Lifecycle**: Concurrency-safe compilation queue with thread-confined worker processes, atomic cancellation, debounce timers, timeouts, and leak-free container cleanup.
 - **Assembly Visualization & Filtering**: Real-time filtering for CFI directives, segment/data directives, metadata labels, and comments, with C++ demangling and source-to-assembly line mapping.
-- **Full File Management**: Dirty-state tracking, save confirmation dialogs, and recent files history.
+- **Full File Management**: Dirty-state tracking, save confirmation dialogs, recent files history, and workspace model serialization.
 
-## Language & Compiler Support Matrix (v0.3.0)
+## Language & Compiler Support Matrix (v0.4.1)
 
 | Language | Status | Compilation Target | Supported Compilers & Tools | Notes |
 | :--- | :--- | :--- | :--- | :--- |

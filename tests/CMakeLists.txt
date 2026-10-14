@@ -15,6 +15,7 @@ add_octos_test(test_job_manager unit/test_job_manager.cpp)
 add_octos_test(test_docker_security unit/test_docker_security.cpp)
 add_octos_test(test_settings_and_files unit/test_settings_and_files.cpp)
 add_octos_test(test_docker_integration integration/test_docker_integration.cpp)
+add_octos_test(test_parser_and_workspace unit/test_parser_and_workspace.cpp)
 
 # 0.4.0 Diff and Highlighters test
 add_executable(test_diff_and_highlighters
