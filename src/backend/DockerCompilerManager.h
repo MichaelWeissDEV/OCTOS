@@ -58,12 +58,16 @@ public:
     explicit DockerCompilerManager(QObject* parent = nullptr);
     ~DockerCompilerManager() override;
 
+    bool isDockerAvailable() const { return m_dockerAvailable; }
+    void checkDockerConnectionAsync();
+
     void fetchAvailableTags(CompilerCategory category);
     QVector<DockerImage> getFilteredTags(CompilerCategory category) const;
 
     void pullImage(const QString& imageName);
     void removeImage(const QString& imageName);
     QVector<DockerImage> listInstalledImages();
+    void refreshInstalledImagesAsync();
     bool isImageInstalled(const QString& imageName);
 
     int submitCompilationJob(const QString& sourceCode, const QString& dockerImage,
@@ -79,6 +83,10 @@ public:
     JobManager* jobManager() const { return m_jobManager.get(); }
 
 signals:
+    void dockerConnectionStatusChanged(bool available, const QString& message);
+    void installedImagesRefreshed(const QVector<DockerImage>& images);
+    void imageRemoved(const QString& imageName, bool success, const QString& message);
+
     void tagsReceived(CompilerCategory category, const QVector<DockerImage>& images);
     void tagsFetchError(CompilerCategory category, const QString& error);
 
@@ -100,6 +108,7 @@ private:
     QNetworkAccessManager* m_networkManager;
     QMap<CompilerCategory, QVector<DockerImage>> m_availableTags;
     QVector<DockerImage> m_installedImages;
+    bool m_dockerAvailable{false};
 
     QProcess* m_currentPullProcess{nullptr};
     QString m_currentPullImage;
@@ -109,7 +118,7 @@ private:
     QVector<DockerImage> parseDockerHubTags(const QJsonDocument& doc, const QString& repository);
     QVector<DockerImage> filterStableTags(const QVector<DockerImage>& tags);
     bool isStableTag(const QString& tag);
-    void refreshInstalledImages();
+    void refreshInstalledImagesSync();
     void parsePullProgress(const QString& output, int& percentage);
 };
 

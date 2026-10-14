@@ -1,97 +1,96 @@
 #include "DockerCompilerManager.h"
-#include "JobManager.h"
-#include "../core/AppSettings.h"
-#include <QCoreApplication>
-#include <QDebug>
-#include <QDir>
-#include <QFile>
-#include <QJsonArray>
-#include <QList>
-#include <QNetworkRequest>
-#include <QProcess>
-#include <QRegularExpression>
-#include <QUrl>
 
-// Timeout constants
-constexpr int kDockerStartTimeoutMs = 5000;    // 5 seconds to start Docker process
-constexpr int kCleanupTimeoutMs = 10000;       // 10 seconds for cleanup operations
+#include <QDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRegularExpression>
+#include <QUrlQuery>
+
+#include "JobManager.h"
+#include "../core/CompilerRegistry.h"
+
+namespace {
+constexpr int kDockerStartTimeoutMs = 5000;
+constexpr int kCleanupTimeoutMs = 3000;
+}
 
 DockerCompilerManager::DockerCompilerManager(QObject* parent)
     : QObject(parent),
       m_networkManager(new QNetworkAccessManager(this)),
-      m_currentPullProcess(nullptr),
       m_jobManager(std::make_unique<JobManager>(nullptr, this)) {
-    qRegisterMetaType<CompilationOutput>("CompilationOutput");
-    qRegisterMetaType<CompilationResult>("CompilationResult");
-    qRegisterMetaType<CompilerCategory>("CompilerCategory");
-
     connect(m_jobManager.get(), &JobManager::jobFinished, this,
             &DockerCompilerManager::onJobManagerResult);
     connect(m_jobManager.get(), &JobManager::jobStateChanged, this,
             &DockerCompilerManager::onJobManagerStateChanged);
 
-    refreshInstalledImages();
+    // Initial async connection and image query
+    checkDockerConnectionAsync();
 }
 
 DockerCompilerManager::~DockerCompilerManager() {
     if (m_currentPullProcess) {
         m_currentPullProcess->kill();
-        delete m_currentPullProcess;
-        m_currentPullProcess = nullptr;
+        m_currentPullProcess->waitForFinished(kCleanupTimeoutMs);
     }
 }
 
-QString DockerCompilerManager::getCategoryRegistry(CompilerCategory category) const {
-    switch (category) {
-        case CompilerCategory::Cpp:
-        case CompilerCategory::C:
-            return "library/gcc";
-        case CompilerCategory::Clang:
-            return "silkeh/clang";
-        case CompilerCategory::Java:
-            return "library/openjdk";
-        case CompilerCategory::Python:
-            return "library/python";
-        case CompilerCategory::Rust:
-            return "library/rust";
-        case CompilerCategory::CSharp:
-            return "library/mono";
-        case CompilerCategory::Ada:
-            return "library/gcc";
-        default:
-            return "";
+void DockerCompilerManager::checkDockerConnectionAsync() {
+    auto* proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus status) {
+        m_dockerAvailable = (exitCode == 0 && status == QProcess::NormalExit);
+        QString msg = m_dockerAvailable ? "Docker daemon is running and reachable."
+                                        : "Cannot connect to Docker daemon. Is Docker installed and running?";
+        emit dockerConnectionStatusChanged(m_dockerAvailable, msg);
+        if (m_dockerAvailable) {
+            refreshInstalledImagesAsync();
+        }
+        proc->deleteLater();
+    });
+
+    proc->start("docker", QStringList() << "info");
+    if (!proc->waitForStarted(2000)) {
+        m_dockerAvailable = false;
+        emit dockerConnectionStatusChanged(false, "Failed to launch 'docker' command. Ensure Docker is in PATH.");
+        proc->deleteLater();
     }
 }
 
 void DockerCompilerManager::fetchAvailableTags(CompilerCategory category) {
-    QString registry = getCategoryRegistry(category);
-    if (registry.isEmpty()) {
-        emit tagsFetchError(category, "Unknown category or unsupported registry");
+    QString repository = getCategoryRegistry(category);
+    if (repository.isEmpty()) {
+        emit tagsFetchError(category, "Invalid compiler category");
         return;
     }
 
-    QString url = QString("https://registry.hub.docker.com/v2/repositories/%1/tags?page_size=100")
-                      .arg(registry);
+    QUrl url(QString("https://registry.hub.docker.com/v2/repositories/%1/tags").arg(repository));
+    QUrlQuery query;
+    query.addQueryItem("page_size", "50");
+    query.addQueryItem("ordering", "last_updated");
+    url.setQuery(query);
 
-    QUrl requestUrl(url);
-    QNetworkRequest request{requestUrl};
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "OCTOS-Compiler-Explorer/0.4.1");
 
     QNetworkReply* reply = m_networkManager->get(request);
-    reply->setProperty("category", QVariant::fromValue(category));
+    reply->setProperty("category", static_cast<int>(category));
+    reply->setProperty("repository", repository);
 
     connect(reply, &QNetworkReply::finished, this, &DockerCompilerManager::onTagsReplyFinished);
 }
 
 void DockerCompilerManager::onTagsReplyFinished() {
-    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    auto* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
-    CompilerCategory category = reply->property("category").value<CompilerCategory>();
+    reply->deleteLater();
+
+    CompilerCategory category = static_cast<CompilerCategory>(reply->property("category").toInt());
+    QString repository = reply->property("repository").toString();
 
     if (reply->error() != QNetworkReply::NoError) {
         emit tagsFetchError(category, reply->errorString());
-        reply->deleteLater();
         return;
     }
 
@@ -99,23 +98,19 @@ void DockerCompilerManager::onTagsReplyFinished() {
     QJsonDocument doc = QJsonDocument::fromJson(data);
 
     if (doc.isNull() || !doc.isObject()) {
-        emit tagsFetchError(category, "Invalid JSON response from Docker Hub");
-        reply->deleteLater();
+        emit tagsFetchError(category, "Failed to parse Docker Hub response");
         return;
     }
 
-    QString registry = getCategoryRegistry(category);
-    QVector<DockerImage> images = parseDockerHubTags(doc, registry);
-    QVector<DockerImage> filtered = filterStableTags(images);
+    QVector<DockerImage> images = parseDockerHubTags(doc, repository);
+    QVector<DockerImage> stableImages = filterStableTags(images);
 
-    m_availableTags[category] = filtered;
-
-    emit tagsReceived(category, filtered);
-    reply->deleteLater();
+    m_availableTags[category] = stableImages;
+    emit tagsReceived(category, stableImages);
 }
 
 QVector<DockerImage> DockerCompilerManager::parseDockerHubTags(const QJsonDocument& doc,
-                                                               const QString& repository) {
+                                                              const QString& repository) {
     QVector<DockerImage> images;
 
     QJsonObject root = doc.object();
@@ -235,7 +230,7 @@ void DockerCompilerManager::onPullProcessFinished(int exitCode, QProcess::ExitSt
     emit pullFinished(m_currentPullImage, success, message);
 
     if (success) {
-        refreshInstalledImages();
+        refreshInstalledImagesAsync();
     }
 
     if (m_currentPullProcess) {
@@ -245,25 +240,83 @@ void DockerCompilerManager::onPullProcessFinished(int exitCode, QProcess::ExitSt
 }
 
 void DockerCompilerManager::removeImage(const QString& imageName) {
-    QProcess process;
-    process.start("docker", QStringList() << "rmi" << imageName);
-    process.waitForFinished(kCleanupTimeoutMs);
+    // Security check: Only allow deleting OCTOS-managed compiler images!
+    if (!CompilerRegistry::instance().isOctosManagedImage(imageName)) {
+        emit imageRemoved(imageName, false, "Cannot remove unmanaged image: only OCTOS-verified compiler images can be deleted.");
+        return;
+    }
 
-    refreshInstalledImages();
+    auto* proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc, imageName](int exitCode, QProcess::ExitStatus status) {
+        bool success = (exitCode == 0 && status == QProcess::NormalExit);
+        QString msg = success ? "Image removed successfully." : "Failed to remove image: " + QString::fromUtf8(proc->readAllStandardError());
+        emit imageRemoved(imageName, success, msg);
+        if (success) {
+            refreshInstalledImagesAsync();
+        }
+        proc->deleteLater();
+    });
+
+    proc->start("docker", QStringList() << "rmi" << imageName);
+    if (!proc->waitForStarted(2000)) {
+        emit imageRemoved(imageName, false, "Could not start docker rmi process.");
+        proc->deleteLater();
+    }
 }
 
 QVector<DockerImage> DockerCompilerManager::listInstalledImages() {
-    refreshInstalledImages();
+    if (m_installedImages.isEmpty()) {
+        refreshInstalledImagesSync();
+    }
     return m_installedImages;
 }
 
-void DockerCompilerManager::refreshInstalledImages() {
+void DockerCompilerManager::refreshInstalledImagesAsync() {
+    auto* proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus status) {
+        if (exitCode == 0 && status == QProcess::NormalExit) {
+            QString output = QString::fromUtf8(proc->readAllStandardOutput());
+            QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+
+            QVector<DockerImage> images;
+            for (const QString& line : lines) {
+                QStringList parts = line.split('|');
+                if (parts.size() != 2) continue;
+
+                QString fullName = parts[0];
+                if (CompilerRegistry::instance().isOctosManagedImage(fullName)) {
+                    DockerImage image;
+                    QStringList nameParts = fullName.split(':');
+                    if (nameParts.size() == 2) {
+                        image.registry = nameParts[0];
+                        image.tag = nameParts[1];
+                    }
+                    image.fullName = fullName;
+                    image.isInstalled = true;
+                    image.size = 0;
+                    images.append(image);
+                }
+            }
+            m_installedImages = images;
+            emit installedImagesRefreshed(m_installedImages);
+        }
+        proc->deleteLater();
+    });
+
+    proc->start("docker", QStringList() << "images" << "--format" << "{{.Repository}}:{{.Tag}}|{{.Size}}");
+    if (!proc->waitForStarted(2000)) {
+        proc->deleteLater();
+    }
+}
+
+void DockerCompilerManager::refreshInstalledImagesSync() {
     m_installedImages.clear();
 
     QProcess process;
-    process.start("docker", QStringList()
-                                << "images" << "--format" << "{{.Repository}}:{{.Tag}}|{{.Size}}");
-    if (!process.waitForFinished(kCleanupTimeoutMs)) {
+    process.start("docker", QStringList() << "images" << "--format" << "{{.Repository}}:{{.Tag}}|{{.Size}}");
+    if (!process.waitForFinished(1000)) {
         return;
     }
 
@@ -275,11 +328,7 @@ void DockerCompilerManager::refreshInstalledImages() {
         if (parts.size() != 2) continue;
 
         QString fullName = parts[0];
-
-        if (fullName.contains("gcc") || fullName.contains("clang") ||
-            fullName.contains("openjdk") || fullName.contains("python") ||
-            fullName.contains("rust") || fullName.contains("mono") ||
-            fullName.contains("temurin") || fullName.contains("llvm")) {
+        if (CompilerRegistry::instance().isOctosManagedImage(fullName)) {
             DockerImage image;
             QStringList nameParts = fullName.split(':');
             if (nameParts.size() == 2) {
@@ -296,14 +345,10 @@ void DockerCompilerManager::refreshInstalledImages() {
 }
 
 bool DockerCompilerManager::isImageInstalled(const QString& imageName) {
-    QProcess process;
-    process.start("docker", QStringList() << "images" << "-q" << imageName);
-    if (!process.waitForFinished(kCleanupTimeoutMs)) {
-        return false;
+    for (const auto& img : m_installedImages) {
+        if (img.fullName == imageName) return true;
     }
-
-    QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
-    return !output.isEmpty();
+    return false;
 }
 
 int DockerCompilerManager::submitCompilationJob(const QString& sourceCode,
@@ -320,7 +365,6 @@ int DockerCompilerManager::submitCompilationJob(const QString& sourceCode,
     req.paneId = paneId;
     req.revision = revision;
 
-    // Detect syntax flavor from flags if present, otherwise default to Intel
     if (compilerFlags.contains("-masm=att")) {
         req.syntaxFlavor = SyntaxFlavor::ATT;
     } else {
@@ -355,7 +399,6 @@ void DockerCompilerManager::onJobManagerStateChanged(quint64 jobId, quint64 /*pa
 void DockerCompilerManager::onJobManagerResult(const CompilationResult& result) {
     emit compilationResultReceived(result);
 
-    // Provide legacy CompilationOutput for compatibility
     CompilationOutput legacy;
     legacy.jobId = static_cast<int>(result.jobId);
     legacy.success = result.success();
@@ -364,6 +407,26 @@ void DockerCompilerManager::onJobManagerResult(const CompilationResult& result) 
     legacy.stderr_ = result.errorOutput;
 
     emit compilationFinished(legacy.jobId, legacy);
+}
+
+QString DockerCompilerManager::getCategoryRegistry(CompilerCategory category) const {
+    switch (category) {
+        case CompilerCategory::Cpp:
+        case CompilerCategory::C:
+        case CompilerCategory::Ada:
+            return "gcc";
+        case CompilerCategory::Clang:
+            return "silkeh/clang";
+        case CompilerCategory::Rust:
+            return "rust";
+        case CompilerCategory::Java:
+            return "eclipse-temurin";
+        case CompilerCategory::Python:
+            return "python";
+        case CompilerCategory::CSharp:
+            return "mono";
+    }
+    return QString();
 }
 
 QStringList DockerCompilerManager::getSupportedArchitectures() const {
