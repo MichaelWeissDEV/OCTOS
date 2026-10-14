@@ -4,32 +4,60 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QMutexLocker>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QTextStream>
+
+#if !defined(Q_OS_WIN)
+#include <unistd.h>
+#include <sys/types.h>
+#endif
 
 DockerExecutionBackend::DockerExecutionBackend(const DockerExecutionConfig& config)
     : m_config(config) {
 }
 
 DockerExecutionBackend::~DockerExecutionBackend() {
-    QMutexLocker locker(&m_processMutex);
-    for (auto it = m_runningProcesses.begin(); it != m_runningProcesses.end(); ++it) {
-        if (it.value()) {
-            it.value()->kill();
-        }
+    QList<QString> containersToClean;
+    {
+        QMutexLocker locker(&m_mutex);
+        containersToClean = m_activeContainers.values();
+        m_activeContainers.clear();
+        m_cancelledJobs.clear();
     }
-    for (const QString& container : m_runningContainers.values()) {
+    // Cleanup containers outside of the mutex lock to avoid deadlocks
+    for (const QString& container : containersToClean) {
         cleanupContainer(container);
     }
-    m_runningProcesses.clear();
-    m_runningContainers.clear();
+}
+
+DockerExecutionConfig DockerExecutionBackend::config() const {
+    QMutexLocker locker(&m_mutex);
+    return m_config;
+}
+
+void DockerExecutionBackend::setConfig(const DockerExecutionConfig& config) {
+    QMutexLocker locker(&m_mutex);
+    m_config = config;
+}
+
+bool DockerExecutionBackend::isJobCancelled(quint64 jobId) const {
+    QMutexLocker locker(&m_mutex);
+    return m_cancelledJobs.contains(jobId);
 }
 
 void DockerExecutionBackend::cleanupContainer(const QString& containerName) {
     if (containerName.isEmpty()) return;
-    QProcess::execute("docker", QStringList() << "kill" << containerName);
-    QProcess::execute("docker", QStringList() << "rm" << "-f" << containerName);
+    // Execute docker kill and rm with short bounded timeouts
+    QProcess killProc;
+    killProc.start("docker", QStringList() << "kill" << containerName);
+    killProc.waitForFinished(3000);
+
+    QProcess rmProc;
+    rmProc.start("docker", QStringList() << "rm" << "-f" << containerName);
+    rmProc.waitForFinished(3000);
 }
 
 QStringList DockerExecutionBackend::buildDockerRunArgs(const CompilationRequest& req,
@@ -72,19 +100,29 @@ QStringList DockerExecutionBackend::buildDockerRunArgs(const CompilationRequest&
         dockerArgs << "--tmpfs" << "/tmp:rw,noexec,nosuid,size=64m";
     }
 
-    // Mount input read-only
+    // Optional user isolation
+    if (!config.runAsUser.isEmpty()) {
+        dockerArgs << "--user" << config.runAsUser;
+    }
+#if defined(Q_OS_LINUX)
+    else if (config.runAsCurrentUser) {
+        dockerArgs << "--user" << QString("%1:%2").arg(::getuid()).arg(::getgid());
+    }
+#endif
+
+    // Mount input strictly read-only
     dockerArgs << "-v" << (inputHostPath + ":/input:ro");
 
     // Mount output read-write
     dockerArgs << "-v" << (outputHostPath + ":/output:rw");
 
-    // Working directory
+    // Working directory inside container
     dockerArgs << "-w" << "/output";
 
     // Docker image
     dockerArgs << req.compilerImage;
 
-    // Compiler and arguments
+    // Compiler executable and arguments
     dockerArgs.append(compilerArgs);
 
     return dockerArgs;
@@ -99,9 +137,12 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
     result.jobId = req.jobId;
     result.paneId = req.paneId;
     result.revision = req.revision;
+    result.compilerImage = req.compilerImage;
     result.state = JobState::Starting;
 
-    if (isCancelled && isCancelled()) {
+    DockerExecutionConfig activeConfig = config();
+
+    if ((isCancelled && isCancelled()) || isJobCancelled(req.jobId)) {
         result.state = JobState::Cancelled;
         result.errorOutput = "Compilation cancelled before starting";
         result.durationMs = timer.elapsed();
@@ -131,11 +172,10 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
         return result;
     }
 
-    // Ensure output directory is world-writable so non-root container users can write
+    // Set strict secure permissions: owner read/write/exec, group read/exec, NEVER world-writable!
     QFile::setPermissions(outputDir.path(),
                           QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
-                          QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup |
-                          QFile::ReadOther | QFile::WriteOther | QFile::ExeOther);
+                          QFile::ReadGroup | QFile::ExeGroup);
 
     QString sourceFile = strategy->sourceFileName(req.sourceCode);
     QString hostSourcePath = inputDir.path() + "/" + sourceFile;
@@ -160,31 +200,31 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
     qint64 pid = QCoreApplication::applicationPid();
     QString containerName = QString("octos_%1_%2").arg(pid).arg(req.jobId);
 
-    QStringList dockerArgs = buildDockerRunArgs(req, m_config, containerName,
+    QStringList dockerArgs = buildDockerRunArgs(req, activeConfig, containerName,
                                                 inputDir.path(), outputDir.path(), compilerArgs);
 
-    if (isCancelled && isCancelled()) {
+    if ((isCancelled && isCancelled()) || isJobCancelled(req.jobId)) {
         result.state = JobState::Cancelled;
         result.errorOutput = "Compilation cancelled";
         result.durationMs = timer.elapsed();
         return result;
     }
 
-    QProcess process;
+    // Register active container before launching process
     {
-        QMutexLocker locker(&m_processMutex);
-        m_runningProcesses[req.jobId] = &process;
-        m_runningContainers[req.jobId] = containerName;
+        QMutexLocker locker(&m_mutex);
+        m_activeContainers[req.jobId] = containerName;
     }
 
+    // QProcess is allocated and operated strictly within this worker thread!
+    QProcess process;
     result.state = JobState::Running;
     process.start("docker", dockerArgs);
 
     if (!process.waitForStarted(5000)) {
         {
-            QMutexLocker locker(&m_processMutex);
-            m_runningProcesses.remove(req.jobId);
-            m_runningContainers.remove(req.jobId);
+            QMutexLocker locker(&m_mutex);
+            m_activeContainers.remove(req.jobId);
         }
         cleanupContainer(containerName);
 
@@ -195,18 +235,87 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
         return result;
     }
 
-    int timeoutMs = req.timeoutMs > 0 ? req.timeoutMs : m_config.defaultTimeoutMs;
-    bool finished = process.waitForFinished(timeoutMs);
+    int timeoutMs = req.timeoutMs > 0 ? req.timeoutMs : activeConfig.defaultTimeoutMs;
 
-    {
-        QMutexLocker locker(&m_processMutex);
-        m_runningProcesses.remove(req.jobId);
-        m_runningContainers.remove(req.jobId);
+    QByteArray rawStdOut;
+    QByteArray rawStdErr;
+    bool stdoutTruncated = false;
+    bool stderrTruncated = false;
+    bool wasCancelled = false;
+    bool wasTimedOut = false;
+
+    // Incremental polling loop to avoid blocking and buffer explosions
+    while (process.state() == QProcess::Running) {
+        if ((isCancelled && isCancelled()) || isJobCancelled(req.jobId)) {
+            wasCancelled = true;
+            break;
+        }
+
+        if (timer.elapsed() > timeoutMs) {
+            wasTimedOut = true;
+            break;
+        }
+
+        // Bounded wait of 100ms
+        process.waitForReadyRead(100);
+
+        // Read incrementally into bounded buffers
+        QByteArray chunkOut = process.readAllStandardOutput();
+        if (!chunkOut.isEmpty()) {
+            if (rawStdOut.size() + chunkOut.size() <= activeConfig.maxOutputBytes) {
+                rawStdOut.append(chunkOut);
+            } else if (!stdoutTruncated) {
+                int remaining = static_cast<int>(activeConfig.maxOutputBytes - rawStdOut.size());
+                if (remaining > 0) {
+                    rawStdOut.append(chunkOut.left(remaining));
+                }
+                stdoutTruncated = true;
+            }
+        }
+
+        QByteArray chunkErr = process.readAllStandardError();
+        if (!chunkErr.isEmpty()) {
+            if (rawStdErr.size() + chunkErr.size() <= activeConfig.maxOutputBytes) {
+                rawStdErr.append(chunkErr);
+            } else if (!stderrTruncated) {
+                int remaining = static_cast<int>(activeConfig.maxOutputBytes - rawStdErr.size());
+                if (remaining > 0) {
+                    rawStdErr.append(chunkErr.left(remaining));
+                }
+                stderrTruncated = true;
+            }
+        }
+
+        // Prevent runaway processes from eating infinite memory if output severely exceeds limits
+        if (stdoutTruncated && stderrTruncated &&
+            (rawStdOut.size() + rawStdErr.size() >= 2 * activeConfig.maxOutputBytes)) {
+            process.kill();
+            break;
+        }
     }
 
-    if (!finished) {
-        // Timeout
+    // Clean up container mapping
+    {
+        QMutexLocker locker(&m_mutex);
+        m_activeContainers.remove(req.jobId);
+        m_cancelledJobs.remove(req.jobId);
+    }
+
+    if (wasCancelled) {
         process.kill();
+        process.waitForFinished(1000);
+        cleanupContainer(containerName);
+
+        result.state = JobState::Cancelled;
+        result.exitCode = -1;
+        result.errorOutput = "Compilation cancelled";
+        result.durationMs = timer.elapsed();
+        return result;
+    }
+
+    if (wasTimedOut) {
+        process.kill();
+        process.waitForFinished(1000);
         cleanupContainer(containerName);
 
         result.state = JobState::TimedOut;
@@ -216,29 +325,45 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
         return result;
     }
 
-    if (isCancelled && isCancelled()) {
-        cleanupContainer(containerName);
-        result.state = JobState::Cancelled;
-        result.exitCode = -1;
-        result.errorOutput = "Compilation cancelled";
-        result.durationMs = timer.elapsed();
-        return result;
+    // Wait for process to fully terminate if still in Finishing state
+    if (process.state() != QProcess::NotRunning) {
+        process.waitForFinished(2000);
+    }
+
+    // Read any remaining output bytes
+    QByteArray finalOut = process.readAllStandardOutput();
+    if (!finalOut.isEmpty() && !stdoutTruncated) {
+        if (rawStdOut.size() + finalOut.size() <= activeConfig.maxOutputBytes) {
+            rawStdOut.append(finalOut);
+        } else {
+            int remaining = static_cast<int>(activeConfig.maxOutputBytes - rawStdOut.size());
+            if (remaining > 0) rawStdOut.append(finalOut.left(remaining));
+            stdoutTruncated = true;
+        }
+    }
+
+    QByteArray finalErr = process.readAllStandardError();
+    if (!finalErr.isEmpty() && !stderrTruncated) {
+        if (rawStdErr.size() + finalErr.size() <= activeConfig.maxOutputBytes) {
+            rawStdErr.append(finalErr);
+        } else {
+            int remaining = static_cast<int>(activeConfig.maxOutputBytes - rawStdErr.size());
+            if (remaining > 0) rawStdErr.append(finalErr.left(remaining));
+            stderrTruncated = true;
+        }
     }
 
     cleanupContainer(containerName);
 
-    QByteArray rawStdOut = process.readAllStandardOutput();
-    QByteArray rawStdErr = process.readAllStandardError();
+    if (stdoutTruncated) {
+        rawStdOut.append("\n[OCTOS: stdout truncated because it exceeded memory limit]");
+    }
+    if (stderrTruncated) {
+        rawStdErr.append("\n[OCTOS: stderr truncated because it exceeded memory limit]");
+    }
 
-    // Check size limits
-    if (rawStdOut.size() > m_config.maxOutputBytes) {
-        rawStdOut.truncate(m_config.maxOutputBytes);
-        rawStdOut.append("\n[OCTOS: stdout truncated because it exceeded output limit]");
-    }
-    if (rawStdErr.size() > m_config.maxOutputBytes) {
-        rawStdErr.truncate(m_config.maxOutputBytes);
-        rawStdErr.append("\n[OCTOS: stderr truncated because it exceeded output limit]");
-    }
+    result.stdoutTruncated = stdoutTruncated;
+    result.stderrTruncated = stderrTruncated;
 
     QString stdoutStr = QString::fromUtf8(rawStdOut);
     QString stderrStr = QString::fromUtf8(rawStdErr);
@@ -246,29 +371,65 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
 
     QString outputFileContent;
     QString hostOutputFile = outputDir.path() + "/" + strategy->outputFileName();
-    QFile outF(hostOutputFile);
-    if (outF.exists() && outF.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QByteArray fileBytes = outF.read(m_config.maxOutputBytes);
-        outputFileContent = QString::fromUtf8(fileBytes);
-        outF.close();
+    QFileInfo outInfo(hostOutputFile);
+
+    if (outInfo.exists()) {
+        QFile outF(hostOutputFile);
+        if (outF.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            if (outInfo.size() > activeConfig.maxFileSizeBytes) {
+                QByteArray fileBytes = outF.read(activeConfig.maxFileSizeBytes);
+                outputFileContent = QString::fromUtf8(fileBytes);
+                outputFileContent.append("\n[OCTOS: Output artifact truncated because file size exceeded maximum limit]");
+                result.artifactTruncated = true;
+            } else {
+                QByteArray fileBytes = outF.readAll();
+                outputFileContent = QString::fromUtf8(fileBytes);
+            }
+            outF.close();
+        }
     }
 
     result = strategy->processOutput(req, exitCode, stdoutStr, stderrStr, outputFileContent);
+    result.compilerImage = req.compilerImage;
+    result.stdoutTruncated = stdoutTruncated;
+    result.stderrTruncated = stderrTruncated;
     result.durationMs = timer.elapsed();
+
+    // Populate structured artifacts
+    if (!result.assemblyOutput.isEmpty()) {
+        CompilationArtifact asmArt;
+        asmArt.type = (req.language == Language::Java) ? ArtifactType::JVM_Bytecode :
+                      (req.language == Language::Python) ? ArtifactType::CPython_Bytecode :
+                      (req.language == Language::CSharp) ? ArtifactType::CIL : ArtifactType::Assembly;
+        asmArt.name = strategy->outputFileName();
+        asmArt.content = result.assemblyOutput;
+        asmArt.sizeBytes = result.assemblyOutput.toUtf8().size();
+        asmArt.originPath = hostOutputFile;
+        result.addArtifact(asmArt);
+    }
+
+    if (!result.rawOutput.isEmpty()) {
+        CompilationArtifact rawArt;
+        rawArt.type = ArtifactType::RawOutput;
+        rawArt.name = "stdout";
+        rawArt.content = result.rawOutput;
+        rawArt.sizeBytes = result.rawOutput.toUtf8().size();
+        result.addArtifact(rawArt);
+    }
 
     return result;
 }
 
 void DockerExecutionBackend::cancel(quint64 jobId) {
-    QMutexLocker locker(&m_processMutex);
-    if (m_runningProcesses.contains(jobId)) {
-        QProcess* proc = m_runningProcesses[jobId];
-        if (proc) {
-            proc->kill();
-        }
+    QString containerToClean;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_cancelledJobs.insert(jobId);
+        containerToClean = m_activeContainers.value(jobId);
     }
-    if (m_runningContainers.contains(jobId)) {
-        QString container = m_runningContainers[jobId];
-        cleanupContainer(container);
+
+    // Clean up container outside the mutex lock
+    if (!containerToClean.isEmpty()) {
+        cleanupContainer(containerToClean);
     }
 }

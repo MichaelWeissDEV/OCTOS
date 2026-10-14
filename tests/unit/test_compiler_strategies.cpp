@@ -4,6 +4,7 @@
 #include "strategies/StrategyUtils.h"
 #include "strategies/JavaStrategy.h"
 #include "core/CompilationRequest.h"
+#include "core/CompilerRegistry.h"
 
 class TestCompilerStrategies : public QObject {
     Q_OBJECT
@@ -19,6 +20,9 @@ private slots:
     void testPythonDestinationSafe();
     void testFlagSanitization();
     void testDiagnosticParsing();
+    void testCompilerRegistryDefaults();
+    void testCompilerRegistryInference();
+    void testCompilerCompatibilityFilter();
 };
 
 void TestCompilerStrategies::testGccStrategyArgs() {
@@ -201,6 +205,56 @@ void TestCompilerStrategies::testDiagnosticParsing() {
     QCOMPARE(diags[0].severity, DiagnosticSeverity::Error);
     QCOMPARE(diags[1].severity, DiagnosticSeverity::Warning);
     QCOMPARE(diags[2].severity, DiagnosticSeverity::Note);
+}
+
+void TestCompilerStrategies::testCompilerRegistryDefaults() {
+    auto& reg = CompilerRegistry::instance();
+    QVERIFY(!reg.allCompilers().isEmpty());
+
+    QVERIFY(reg.hasCompilerForImage("gcc:latest"));
+    CompilerDefinition gccDef = reg.compilerForImage("gcc:latest");
+    QCOMPARE(gccDef.family, CompilerFamily::GCC);
+    QVERIFY(gccDef.supportsSyntax(SyntaxFlavor::Intel));
+    QVERIFY(gccDef.supportsSyntax(SyntaxFlavor::ATT));
+    QVERIFY(gccDef.supportsArtifact(ArtifactType::Assembly));
+}
+
+void TestCompilerStrategies::testCompilerRegistryInference() {
+    auto& reg = CompilerRegistry::instance();
+
+    CompilerDefinition rustcDef = reg.compilerForImage("rust:1.75");
+    QCOMPARE(rustcDef.family, CompilerFamily::Rustc);
+    QCOMPARE(rustcDef.language, Language::Rust);
+
+    CompilerDefinition clangDef = reg.compilerForImage("silkeh/clang:16");
+    QCOMPARE(clangDef.family, CompilerFamily::Clang);
+
+    CompilerDefinition pyDef = reg.compilerForImage("python:3.11");
+    QCOMPARE(pyDef.family, CompilerFamily::Python);
+    QCOMPARE(pyDef.language, Language::Python);
+}
+
+void TestCompilerStrategies::testCompilerCompatibilityFilter() {
+    auto& reg = CompilerRegistry::instance();
+
+    // Verified compilers
+    QVERIFY(reg.isImageCompatibleWithLanguage("gcc:13", Language::Cpp));
+    QVERIFY(reg.isImageCompatibleWithLanguage("gcc:13", Language::C));
+    QVERIFY(reg.isImageCompatibleWithLanguage("silkeh/clang:17", Language::Cpp));
+    QVERIFY(reg.isImageCompatibleWithLanguage("rust:latest", Language::Rust));
+    QVERIFY(reg.isImageCompatibleWithLanguage("eclipse-temurin:21", Language::Java));
+    QVERIFY(reg.isImageCompatibleWithLanguage("python:3.12", Language::Python));
+
+    // INCOMPATIBLE combinations must be strictly REJECTED
+    QVERIFY(!reg.isImageCompatibleWithLanguage("rust:latest", Language::Cpp));
+    QVERIFY(!reg.isImageCompatibleWithLanguage("gcc:13", Language::Rust));
+    QVERIFY(!reg.isImageCompatibleWithLanguage("python:3.11", Language::Cpp));
+    QVERIFY(!reg.isImageCompatibleWithLanguage("eclipse-temurin:17", Language::Rust));
+
+    // Arbitrary/unrelated images must NOT be accepted as compilers
+    QVERIFY(!reg.isImageCompatibleWithLanguage("ubuntu:latest", Language::Cpp));
+    QVERIFY(!reg.isImageCompatibleWithLanguage("nginx:alpine", Language::Rust));
+    QVERIFY(!reg.isImageCompatibleWithLanguage("trusty-rust-backend", Language::Rust));
 }
 
 QTEST_MAIN(TestCompilerStrategies)

@@ -30,6 +30,7 @@
 #include <QVBoxLayout>
 
 #include "core/AppSettings.h"
+#include "core/CompilerRegistry.h"
 #include "highlighters/RustHighlighter.h"
 #include "highlighters/PythonHighlighter.h"
 #include "managers/RecentFilesManager.h"
@@ -85,25 +86,56 @@ void CodeEditor::enableOpcodeTooltips(bool enable) {
     setMouseTracking(enable);
     if (viewport()) {
         viewport()->setMouseTracking(enable);
+        if (enable) {
+            viewport()->installEventFilter(this);
+        } else {
+            viewport()->removeEventFilter(this);
+        }
     }
+}
+
+bool CodeEditor::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == viewport() && m_opcodeTooltipsEnabled && event->type() == QEvent::ToolTip) {
+        auto* helpEvent = static_cast<QHelpEvent*>(event);
+        QTextCursor cursor = cursorForPosition(helpEvent->pos());
+        QTextBlock block = cursor.block();
+        if (block.isValid()) {
+            QString lineText = block.text();
+            int column = cursor.positionInBlock();
+            QString mnemonic;
+            QString arch;
+            if (OpcodeReference::extractMnemonicAtColumn(lineText, column, &mnemonic, &arch)) {
+                OpcodeInfo info = OpcodeReference::instance().getOpcodeInfo(mnemonic, arch);
+                QToolTip::showText(helpEvent->globalPos(), info.toFormattedTooltip(), viewport());
+                return true;
+            }
+        }
+        QToolTip::hideText();
+        event->ignore();
+        return true;
+    }
+    return QPlainTextEdit::eventFilter(watched, event);
 }
 
 bool CodeEditor::event(QEvent* event) {
     if (m_opcodeTooltipsEnabled && event->type() == QEvent::ToolTip) {
         auto* helpEvent = static_cast<QHelpEvent*>(event);
         QTextCursor cursor = cursorForPosition(helpEvent->pos());
-        cursor.select(QTextCursor::WordUnderCursor);
-        QString word = cursor.selectedText().trimmed().toLower();
-
-        if (!word.isEmpty() && OpcodeReference::instance().hasOpcode(word)) {
-            OpcodeInfo info = OpcodeReference::instance().getOpcodeInfo(word);
-            QToolTip::showText(helpEvent->globalPos(), info.toFormattedTooltip(), this);
-            return true;
-        } else {
-            QToolTip::hideText();
-            event->ignore();
-            return true;
+        QTextBlock block = cursor.block();
+        if (block.isValid()) {
+            QString lineText = block.text();
+            int column = cursor.positionInBlock();
+            QString mnemonic;
+            QString arch;
+            if (OpcodeReference::extractMnemonicAtColumn(lineText, column, &mnemonic, &arch)) {
+                OpcodeInfo info = OpcodeReference::instance().getOpcodeInfo(mnemonic, arch);
+                QToolTip::showText(helpEvent->globalPos(), info.toFormattedTooltip(), this);
+                return true;
+            }
         }
+        QToolTip::hideText();
+        event->ignore();
+        return true;
     }
     return QPlainTextEdit::event(event);
 }
@@ -587,46 +619,7 @@ QStringList MainWindow::getCompilersForLanguage(Language lang) {
     QStringList filtered;
 
     for (const DockerImage& image : installedImages) {
-        QString imageName = image.fullName.toLower();
-
-        switch (lang) {
-            case Language::Cpp:
-            case Language::C:
-                if (imageName.contains("gcc") || imageName.contains("clang")) {
-                    filtered.append(image.fullName);
-                }
-                break;
-            case Language::Rust:
-                if (imageName.contains("rust")) {
-                    filtered.append(image.fullName);
-                }
-                break;
-            case Language::Java:
-                if (imageName.contains("openjdk") || imageName.contains("eclipse-temurin") ||
-                    imageName.contains("temurin") || imageName.contains("java")) {
-                    filtered.append(image.fullName);
-                }
-                break;
-            case Language::Python:
-                if (imageName.contains("python")) {
-                    filtered.append(image.fullName);
-                }
-                break;
-            case Language::CSharp:
-                if (imageName.contains("mono") || imageName.contains("csharp")) {
-                    filtered.append(image.fullName);
-                }
-                break;
-            case Language::Ada:
-                if (imageName.contains("gcc")) {
-                    filtered.append(image.fullName);
-                }
-                break;
-        }
-    }
-
-    if (filtered.isEmpty()) {
-        for (const DockerImage& image : installedImages) {
+        if (CompilerRegistry::instance().isImageCompatibleWithLanguage(image.fullName, lang)) {
             filtered.append(image.fullName);
         }
     }
@@ -736,6 +729,11 @@ void MainWindow::compileAllPanes() {
 void MainWindow::onCompilationResultReceived(const CompilationResult& result) {
     CompilerOutputPane* pane = m_paneLookup.value(result.paneId, nullptr);
     if (!pane) {
+        return;
+    }
+
+    // Check if pane still expects this exact job ID
+    if (pane->getCurrentJobId() != static_cast<int>(result.jobId)) {
         return;
     }
 
@@ -1162,17 +1160,41 @@ void MainWindow::onCompareDiff() {
         return;
     }
 
-    CompilerOutputPane* paneA = m_outputPanes[0];
-    CompilerOutputPane* paneB = m_outputPanes[1];
+    QVector<DiffPaneInfo> paneInfos;
+    for (int i = 0; i < m_outputPanes.size(); ++i) {
+        CompilerOutputPane* pane = m_outputPanes[i];
+        DiffPaneInfo info;
+        info.paneId = pane->paneId();
+        info.compilerName = pane->getSelectedCompiler();
+        info.compilerFlags = pane->getCompilerFlags();
+        info.language = pane->getLanguage();
+        info.syntaxFlavor = pane->getSyntaxFlavor();
+        info.content = pane->getEditor()->toPlainText();
 
-    QString nameA = QString("Pane 1 (%1 - %2)")
-                        .arg(paneA->getSelectedCompiler(), paneA->getCompilerFlags());
-    QString nameB = QString("Pane 2 (%1 - %2)")
-                        .arg(paneB->getSelectedCompiler(), paneB->getCompilerFlags());
+        Language lang = pane->getLanguage();
+        if (lang == Language::Java) {
+            info.artifactType = ArtifactType::JVM_Bytecode;
+        } else if (lang == Language::Python) {
+            info.artifactType = ArtifactType::CPython_Bytecode;
+        } else if (lang == Language::CSharp) {
+            info.artifactType = ArtifactType::CIL;
+        } else {
+            info.artifactType = ArtifactType::Assembly;
+        }
 
-    QString asmA = paneA->getEditor()->toPlainText();
-    QString asmB = paneB->getEditor()->toPlainText();
+        QString syn = LanguageStrategyRegistry::instance().supportsSyntaxFlavor(lang)
+                          ? (info.syntaxFlavor == SyntaxFlavor::Intel ? "Intel" : "AT&T")
+                          : "";
+        info.title = QString("Pane %1: %2 (%3 %4)")
+                         .arg(QString::number(i + 1),
+                              info.compilerName.isEmpty() ? "No Compiler" : info.compilerName,
+                              languageToString(lang),
+                              syn)
+                         .trimmed();
 
-    DiffDialog dialog(nameA, asmA, nameB, asmB, this);
+        paneInfos.append(info);
+    }
+
+    DiffDialog dialog(paneInfos, 0, 1, this);
     dialog.exec();
 }

@@ -5,7 +5,7 @@
 #include "DockerExecutionConfig.h"
 #include <QMutex>
 #include <QMap>
-#include <QProcess>
+#include <QSet>
 #include <QStringList>
 
 class DockerExecutionBackend : public IExecutionBackend {
@@ -18,8 +18,8 @@ public:
 
     void cancel(quint64 jobId) override;
 
-    const DockerExecutionConfig& config() const { return m_config; }
-    void setConfig(const DockerExecutionConfig& config) { m_config = config; }
+    DockerExecutionConfig config() const;
+    void setConfig(const DockerExecutionConfig& config);
 
     static QStringList buildDockerRunArgs(const CompilationRequest& req,
                                          const DockerExecutionConfig& config,
@@ -31,10 +31,12 @@ public:
     static void cleanupContainer(const QString& containerName);
 
 private:
+    bool isJobCancelled(quint64 jobId) const;
+
     DockerExecutionConfig m_config;
-    QMutex m_processMutex;
-    QMap<quint64, QProcess*> m_runningProcesses;
-    QMap<quint64, QString> m_runningContainers;
+    mutable QMutex m_mutex;
+    QSet<quint64> m_cancelledJobs;
+    QMap<quint64, QString> m_activeContainers;
 };
 
 #endif // DOCKEREXECUTIONBACKEND_H

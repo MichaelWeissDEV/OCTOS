@@ -32,6 +32,7 @@ public:
 
     int activeJobCount() const;
     quint64 getPaneCurrentRevision(quint64 paneId) const;
+    quint64 getPaneCurrentJobId(quint64 paneId) const;
 
     void shutdown();
 
@@ -51,6 +52,7 @@ private:
     std::atomic<quint64> m_nextJobId{1};
 
     QMap<quint64, quint64> m_paneCurrentRevision;
+    QMap<quint64, quint64> m_paneCurrentJobId;
     QMap<quint64, QSet<quint64>> m_paneActiveJobs;
     QMap<quint64, std::shared_ptr<std::atomic_bool>> m_jobCancelledFlags;
     std::atomic_bool m_isShuttingDown{false};

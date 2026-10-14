@@ -73,7 +73,8 @@ JobManager::JobManager(std::shared_ptr<IExecutionBackend> backend, QObject* pare
     : QObject(parent),
       m_backend(std::move(backend)) {
     if (!m_backend) {
-        m_backend = std::make_shared<DockerExecutionBackend>();
+        DockerExecutionConfig cfg = DockerExecutionConfig::fromSettings(AppSettings::instance());
+        m_backend = std::make_shared<DockerExecutionBackend>(cfg);
     }
 
     int threadCount = AppSettings::instance().maxParallelJobs();
@@ -86,8 +87,13 @@ JobManager::~JobManager() {
 }
 
 void JobManager::shutdown() {
+    // 1. Refuse any new jobs
     m_isShuttingDown.store(true, std::memory_order_release);
 
+    // 2. Clear pending, unstarted tasks from threadpool queue
+    m_threadPool.clear();
+
+    // 3. Signal cancellation to all running tasks
     QList<quint64> jobIdsToCancel;
     {
         QMutexLocker locker(&m_mutex);
@@ -99,18 +105,32 @@ void JobManager::shutdown() {
         }
     }
 
+    // 4. Cancel active processes and containers without holding mutex
     if (m_backend) {
         for (quint64 jobId : jobIdsToCancel) {
             m_backend->cancel(jobId);
         }
     }
 
-    m_threadPool.clear();
-    m_threadPool.waitForDone(5000);
+    // 5. Controlled worker completion: wait for all threads to terminate
+    if (!m_threadPool.waitForDone(5000)) {
+        // If workers linger, retry cancel and bounded wait
+        if (m_backend) {
+            for (quint64 jobId : jobIdsToCancel) {
+                m_backend->cancel(jobId);
+            }
+        }
+        m_threadPool.waitForDone(2000);
+    }
 
-    QMutexLocker locker(&m_mutex);
-    m_jobCancelledFlags.clear();
-    m_paneActiveJobs.clear();
+    // 6. Release resources only AFTER threadpool workers have finished
+    {
+        QMutexLocker locker(&m_mutex);
+        m_jobCancelledFlags.clear();
+        m_paneActiveJobs.clear();
+        m_paneCurrentRevision.clear();
+        m_paneCurrentJobId.clear();
+    }
 }
 
 quint64 JobManager::submitJob(CompilationRequest req) {
@@ -127,10 +147,11 @@ quint64 JobManager::submitJob(CompilationRequest req) {
     {
         QMutexLocker locker(&m_mutex);
 
-        // Track latest revision for this pane
+        // Track latest revision and latest job ID for this pane
         m_paneCurrentRevision[req.paneId] = req.revision;
+        m_paneCurrentJobId[req.paneId] = jobId;
 
-        // Cancel previous active jobs for the same pane
+        // Cancel previous active/queued jobs for the same pane (bounded/coalesced queue)
         if (m_paneActiveJobs.contains(req.paneId)) {
             for (quint64 oldJobId : m_paneActiveJobs[req.paneId]) {
                 if (m_jobCancelledFlags.contains(oldJobId)) {
@@ -138,13 +159,14 @@ quint64 JobManager::submitJob(CompilationRequest req) {
                     oldJobsToCancel.append(oldJobId);
                 }
             }
+            m_paneActiveJobs[req.paneId].clear();
         }
 
         m_paneActiveJobs[req.paneId].insert(jobId);
         m_jobCancelledFlags[jobId] = cancelFlag;
     }
 
-    // Cancel old jobs in the backend
+    // Cancel old jobs in the backend outside of the mutex
     if (m_backend) {
         for (quint64 oldId : oldJobsToCancel) {
             m_backend->cancel(oldId);
@@ -196,6 +218,7 @@ void JobManager::invalidatePane(quint64 paneId) {
     cancelPaneJobs(paneId);
     QMutexLocker locker(&m_mutex);
     m_paneCurrentRevision.remove(paneId);
+    m_paneCurrentJobId.remove(paneId);
 }
 
 void JobManager::setMaxParallelJobs(int maxJobs) {
@@ -217,6 +240,11 @@ quint64 JobManager::getPaneCurrentRevision(quint64 paneId) const {
     return m_paneCurrentRevision.value(paneId, 0);
 }
 
+quint64 JobManager::getPaneCurrentJobId(quint64 paneId) const {
+    QMutexLocker locker(&m_mutex);
+    return m_paneCurrentJobId.value(paneId, 0);
+}
+
 void JobManager::handleTaskFinished(const CompilationResult& result) {
     bool isObsolete = false;
     {
@@ -229,10 +257,21 @@ void JobManager::handleTaskFinished(const CompilationResult& result) {
             }
         }
 
-        quint64 currentRev = m_paneCurrentRevision.value(result.paneId, 0);
-        if (result.revision < currentRev) {
-            // A newer revision exists for this pane! Discard obsolete result!
+        // Criterion 1: Pane still exists
+        if (!m_paneCurrentJobId.contains(result.paneId)) {
             isObsolete = true;
+        } else {
+            // Criterion 2: Job matches the current expected latest job for this pane
+            quint64 latestExpectedJobId = m_paneCurrentJobId.value(result.paneId, 0);
+            if (result.jobId != latestExpectedJobId) {
+                isObsolete = true;
+            }
+
+            // Criterion 3: Document revision must not be superseded
+            quint64 currentRev = m_paneCurrentRevision.value(result.paneId, 0);
+            if (result.revision < currentRev) {
+                isObsolete = true;
+            }
         }
     }
 

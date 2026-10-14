@@ -1,6 +1,9 @@
 #include <QTest>
+#include <QFile>
+#include <QTemporaryDir>
 #include "backend/DockerExecutionBackend.h"
 #include "backend/DockerExecutionConfig.h"
+#include "core/AppSettings.h"
 #include "core/CompilationRequest.h"
 
 class TestDockerSecurity : public QObject {
@@ -9,6 +12,10 @@ class TestDockerSecurity : public QObject {
 private slots:
     void testSecurityArguments();
     void testCustomResourceLimits();
+    void testConfigValidation();
+    void testFromSettings();
+    void testOutputDirectorySecurity();
+    void testRunAsUserArg();
 };
 
 void TestDockerSecurity::testSecurityArguments() {
@@ -88,6 +95,78 @@ void TestDockerSecurity::testCustomResourceLimits() {
     QVERIFY(dockerArgs.contains("1024m"));
     QVERIFY(dockerArgs.contains("2.0"));
     QVERIFY(dockerArgs.contains("64"));
+}
+
+void TestDockerSecurity::testConfigValidation() {
+    DockerExecutionConfig cfg;
+    QString err;
+    QVERIFY(cfg.validate(&err));
+
+    // Invalid memory format
+    cfg.memoryLimit = "invalid_mem";
+    QVERIFY(!cfg.validate(&err));
+    QVERIFY(err.contains("memory limit format"));
+
+    cfg.memoryLimit = "256m";
+    QVERIFY(cfg.validate(&err));
+
+    // Invalid CPU limit
+    cfg.cpuLimit = "-1.0";
+    QVERIFY(!cfg.validate(&err));
+    cfg.cpuLimit = "100.0"; // > 64.0
+    QVERIFY(!cfg.validate(&err));
+    cfg.cpuLimit = "2.5";
+    QVERIFY(cfg.validate(&err));
+
+    // Invalid PIDs
+    cfg.pidsLimit = 5; // < 16
+    QVERIFY(!cfg.validate(&err));
+    cfg.pidsLimit = 10000; // > 4096
+    QVERIFY(!cfg.validate(&err));
+    cfg.pidsLimit = 256;
+    QVERIFY(cfg.validate(&err));
+}
+
+void TestDockerSecurity::testFromSettings() {
+    auto& settings = AppSettings::instance();
+    settings.setDockerMemoryLimit("768m");
+    settings.setDockerCpuLimit("2.0");
+    settings.setDockerPidsLimit(200);
+
+    DockerExecutionConfig cfg = DockerExecutionConfig::fromSettings(settings);
+    QCOMPARE(cfg.memoryLimit, QString("768m"));
+    QCOMPARE(cfg.cpuLimit, QString("2.0"));
+    QCOMPARE(cfg.pidsLimit, 200);
+    QVERIFY(cfg.validate());
+}
+
+void TestDockerSecurity::testOutputDirectorySecurity() {
+    QTemporaryDir outputDir;
+    QVERIFY(outputDir.isValid());
+
+    // Apply OCTOS output permissions
+    QFile::setPermissions(outputDir.path(),
+                          QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                          QFile::ReadGroup | QFile::ExeGroup);
+
+    QFileDevice::Permissions perms = QFile::permissions(outputDir.path());
+    // World write permission MUST NOT be set!
+    QVERIFY(!(perms & QFileDevice::WriteOther));
+}
+
+void TestDockerSecurity::testRunAsUserArg() {
+    DockerExecutionConfig config;
+    config.runAsUser = "1001:1001";
+
+    CompilationRequest req;
+    req.compilerImage = "gcc:13";
+
+    QStringList dockerArgs = DockerExecutionBackend::buildDockerRunArgs(
+        req, config, "test_user_container", "/in", "/out", {"g++"});
+
+    int userIdx = dockerArgs.indexOf("--user");
+    QVERIFY(userIdx >= 0 && userIdx + 1 < dockerArgs.size());
+    QCOMPARE(dockerArgs[userIdx + 1], QString("1001:1001"));
 }
 
 QTEST_MAIN(TestDockerSecurity)
