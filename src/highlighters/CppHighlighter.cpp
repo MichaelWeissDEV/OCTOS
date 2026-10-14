@@ -1,4 +1,3 @@
-# 1 "./src/highlighters/CppHighlighter.cpp"
 #include "CppHighlighter.h"
 
 CppHighlighter::CppHighlighter(QTextDocument* parent) : QSyntaxHighlighter(parent) {
@@ -131,8 +130,10 @@ CppHighlighter::CppHighlighter(QTextDocument* parent) : QSyntaxHighlighter(paren
     m_rules.append(rule);
 }
 
+#include <utility>
+
 void CppHighlighter::highlightBlock(const QString& text) {
-    for (const HighlightingRule& rule : qAsConst(m_rules)) {
+    for (const HighlightingRule& rule : std::as_const(m_rules)) {
         QRegularExpressionMatchIterator matchIterator = rule.pattern.globalMatch(text);
         while (matchIterator.hasNext()) {
             QRegularExpressionMatch match = matchIterator.next();

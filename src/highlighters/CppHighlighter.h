@@ -1,4 +1,3 @@
-# 1 "./src/highlighters/CppHighlighter.h"
 #ifndef CPPHIGHLIGHTER_H
 #define CPPHIGHLIGHTER_H
 

@@ -1,4 +1,3 @@
-# 1 "./src/managers/RecentFilesManager.cpp"
 #include "RecentFilesManager.h"
 
 #include <QFileInfo>

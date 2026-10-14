@@ -1,4 +1,3 @@
-# 1 "./src/highlighters/AsmHighlighter.cpp"
 #include "AsmHighlighter.h"
 
 AsmHighlighter::AsmHighlighter(QTextDocument *parent) : QSyntaxHighlighter(parent) {
@@ -80,8 +79,10 @@ AsmHighlighter::AsmHighlighter(QTextDocument *parent) : QSyntaxHighlighter(paren
     m_rules.append(rule);
 }
 
+#include <utility>
+
 void AsmHighlighter::highlightBlock(const QString &text) {
-    for (const HighlightingRule &rule : qAsConst(m_rules)) {
+    for (const HighlightingRule &rule : std::as_const(m_rules)) {
         QRegularExpressionMatchIterator matchIterator = rule.pattern.globalMatch(text);
         while (matchIterator.hasNext()) {
             QRegularExpressionMatch match = matchIterator.next();

@@ -1,4 +1,3 @@
-# 1 "./src/highlighters/AsmHighlighter.h"
 #ifndef ASMHIGHLIGHTER_H
 #define ASMHIGHLIGHTER_H
 

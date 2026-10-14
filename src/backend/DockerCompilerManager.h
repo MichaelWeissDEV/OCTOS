@@ -13,21 +13,23 @@
 #include <QProcess>
 #include <QString>
 #include <QStringList>
-#include <QThreadPool>
 #include <QVector>
+#include <memory>
+
+#include "../core/CompilerEnums.h"
+#include "../core/CompilationRequest.h"
+#include "../core/CompilationResult.h"
 
 struct DockerImage {
     QString registry;
     QString tag;
     QString fullName;
     QString architecture;
-    bool isInstalled;
-    qint64 size;
+    bool isInstalled{false};
+    qint64 size{0};
 
     QString displayName() const { return fullName; }
 };
-
-enum class CompilerCategory { Cpp, C, Java, Python, Rust, Clang };
 
 struct CompilationJob {
     QString sourceCode;
@@ -47,14 +49,14 @@ struct CompilationOutput {
 
 Q_DECLARE_METATYPE(CompilationOutput);
 
-class CompilationTask;
+class JobManager;
 
 class DockerCompilerManager : public QObject {
     Q_OBJECT
 
-   public:
+public:
     explicit DockerCompilerManager(QObject* parent = nullptr);
-    ~DockerCompilerManager();
+    ~DockerCompilerManager() override;
 
     void fetchAvailableTags(CompilerCategory category);
     QVector<DockerImage> getFilteredTags(CompilerCategory category) const;
@@ -65,13 +67,18 @@ class DockerCompilerManager : public QObject {
     bool isImageInstalled(const QString& imageName);
 
     int submitCompilationJob(const QString& sourceCode, const QString& dockerImage,
-                             const QString& compilerFlags, const QString& language);
+                             const QString& compilerFlags, const QString& language,
+                             quint64 paneId = 0, quint64 revision = 0);
+    quint64 submitRequest(const CompilationRequest& req);
     void cancelJob(int jobId);
+    void cancelPaneJobs(quint64 paneId);
 
     QString getCategoryRegistry(CompilerCategory category) const;
     QStringList getSupportedArchitectures() const;
 
-   signals:
+    JobManager* jobManager() const { return m_jobManager.get(); }
+
+signals:
     void tagsReceived(CompilerCategory category, const QVector<DockerImage>& images);
     void tagsFetchError(CompilerCategory category, const QString& error);
 
@@ -79,28 +86,25 @@ class DockerCompilerManager : public QObject {
     void pullFinished(const QString& imageName, bool success, const QString& message);
 
     void compilationFinished(int jobId, const CompilationOutput& output);
+    void compilationResultReceived(const CompilationResult& result);
     void compilationProgress(int jobId, int percentage);
 
-   private slots:
+private slots:
     void onTagsReplyFinished();
     void onPullProcessOutput();
     void onPullProcessFinished(int exitCode, QProcess::ExitStatus status);
-    void handleTaskFinished(const CompilationOutput& output, CompilationTask* task);
+    void onJobManagerResult(const CompilationResult& result);
+    void onJobManagerStateChanged(quint64 jobId, quint64 paneId, JobState state);
 
-   private:
-    friend class CompilationTask;
-
+private:
     QNetworkAccessManager* m_networkManager;
     QMap<CompilerCategory, QVector<DockerImage>> m_availableTags;
     QVector<DockerImage> m_installedImages;
 
-    QProcess* m_currentPullProcess;
+    QProcess* m_currentPullProcess{nullptr};
     QString m_currentPullImage;
 
-    QMap<int, CompilationTask*> m_activeJobs;
-    QThreadPool m_threadPool;
-    QMutex m_jobMutex;
-    int m_nextJobId;
+    std::unique_ptr<JobManager> m_jobManager;
 
     QVector<DockerImage> parseDockerHubTags(const QJsonDocument& doc, const QString& repository);
     QVector<DockerImage> filterStableTags(const QVector<DockerImage>& tags);
@@ -109,4 +113,4 @@ class DockerCompilerManager : public QObject {
     void parsePullProgress(const QString& output, int& percentage);
 };
 
-#endif
+#endif // DOCKERCOMPILERMANAGER_H

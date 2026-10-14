@@ -1,12 +1,13 @@
-# 1 "./src/MainWindow.h"
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMap>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSplitter>
 #include <QStringList>
 #include <QTabWidget>
@@ -14,10 +15,10 @@
 #include <memory>
 
 #include "core/CompilerEnums.h"
+#include "core/CompilationResult.h"
 #include "backend/DockerCompilerManager.h"
 #include "highlighters/AsmHighlighter.h"
 #include "highlighters/CppHighlighter.h"
-#include "managers/PackageManager.h"
 #include "managers/RecentFilesManager.h"
 #include "managers/SnippetManager.h"
 #include "ui/CompilerManagerDialog.h"
@@ -30,71 +31,77 @@ class LineNumberArea;
 class CodeEditor : public QPlainTextEdit {
     Q_OBJECT
 
-   public:
+public:
     explicit CodeEditor(QWidget* parent = nullptr);
     void lineNumberAreaPaintEvent(QPaintEvent* event);
     int lineNumberAreaWidth();
 
-   protected:
+protected:
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
-   private slots:
+private slots:
     void updateLineNumberAreaWidth(int);
     void highlightCurrentLine();
     void updateLineNumberArea(const QRect&, int);
 
-   private:
+private:
     LineNumberArea* m_lineNumberArea;
 };
 
 class LineNumberArea : public QWidget {
-   public:
+public:
     explicit LineNumberArea(CodeEditor* editor) : QWidget(editor), m_codeEditor(editor) {}
 
     QSize sizeHint() const override;
 
-   protected:
+protected:
     void paintEvent(QPaintEvent* event) override;
 
-   private:
+private:
     CodeEditor* m_codeEditor;
 };
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
-   public:
+public:
     explicit MainWindow(QWidget* parent = nullptr);
-    ~MainWindow();
+    ~MainWindow() override;
 
-   private slots:
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
+
+private slots:
     void onInputTextChanged();
     void doCompile();
+    void onNew();
     void onSave();
+    void onSaveAs();
     void onLoad();
     void onManageDockerCompilers();
-    void onOpenRecentFile();
     void onInsertSnippet();
     void onChangeTheme(int index);
     void onClearRecentFiles();
     void onAddComparisonPane();
     void onRemovePane(CompilerOutputPane* pane);
     void onCloseOtherPanes();
-    void onCompilationFinished(int jobId, const CompilationOutput& output);
+    void onCompilationResultReceived(const CompilationResult& result);
     void onPaneSettingsChanged();
     void onToggleHighlightMode();
     void onSourceCursorPositionChanged();
     void onRefilterOutput();
+    void onDocumentModificationChanged(bool modified);
 
-   protected:
-    void dragEnterEvent(QDragEnterEvent* event) override;
-    void dropEvent(QDropEvent* event) override;
-
-   private:
+private:
     void setupUi();
+    bool maybeSave();
     void loadFile(const QString& filePath);
-    void saveFile(const QString& filePath);
+    bool saveFile(const QString& filePath);
+    void updateRecentFilesMenu();
+    void updateWindowTitle();
     void updateCompilerLists();
     void compileAllPanes();
     void refreshDockerCompilerList();
@@ -103,40 +110,41 @@ class MainWindow : public QMainWindow {
     void applyHighlighting();
     QColor getHighlightColor(int index, int total);
 
-    CodeEditor* m_inputEditor;
-    QWidget* m_sourceEditorContainer;
-    QSplitter* m_splitter;
-    QSplitter* m_outputSplitter;
-    QPushButton* m_addPaneButton;
-    QPushButton* m_closeOthersButton;
-    QPushButton* m_highlightToggle;
+    CodeEditor* m_inputEditor{nullptr};
+    QWidget* m_sourceEditorContainer{nullptr};
+    QSplitter* m_splitter{nullptr};
+    QSplitter* m_outputSplitter{nullptr};
+    QPushButton* m_addPaneButton{nullptr};
+    QPushButton* m_closeOthersButton{nullptr};
+    QPushButton* m_highlightToggle{nullptr};
 
-    int m_highlightMode;
+    int m_highlightMode{0};
+    quint64 m_inputRevision{0};
 
     FilterSettings m_filterSettings;
-    QAction* m_filterShowSegmentDirectives;
-    QAction* m_filterShowDataDirectives;
-    QAction* m_filterShowCfiDirectives;
-    QAction* m_filterShowMetadataLabels;
-    QAction* m_filterShowUnusedLabels;
-    QAction* m_filterHideEmptyLabels;
-    QAction* m_filterShowDebugInfo;
-    QAction* m_filterShowComments;
-    QAction* m_filterDemangle;
+    QAction* m_filterShowSegmentDirectives{nullptr};
+    QAction* m_filterShowDataDirectives{nullptr};
+    QAction* m_filterShowCfiDirectives{nullptr};
+    QAction* m_filterShowMetadataLabels{nullptr};
+    QAction* m_filterShowUnusedLabels{nullptr};
+    QAction* m_filterHideEmptyLabels{nullptr};
+    QAction* m_filterShowDebugInfo{nullptr};
+    QAction* m_filterShowComments{nullptr};
+    QAction* m_filterDemangle{nullptr};
 
     QVector<CompilerOutputPane*> m_outputPanes;
-    QMap<int, CompilerOutputPane*> m_jobToPaneMap;
+    QMap<quint64, CompilerOutputPane*> m_paneLookup; // paneId -> pane
 
-    QTimer* m_debounceTimer;
-    DockerCompilerManager* m_dockerManager;
+    QTimer* m_debounceTimer{nullptr};
+    DockerCompilerManager* m_dockerManager{nullptr};
     QVector<AsmHighlighter*> m_asmHighlighters;
-    CppHighlighter* m_cppHighlighter;
-    PackageManager m_packageManager;
+    CppHighlighter* m_cppHighlighter{nullptr};
     RecentFilesManager m_recentFilesManager;
     SnippetManager m_snippetManager;
-    ThemeType m_currentTheme;
+    ThemeType m_currentTheme{ThemeType::Dark};
 
+    QMenu* m_recentMenu{nullptr};
     QString m_currentFile;
 };
 
-#endif
+#endif // MAINWINDOW_H

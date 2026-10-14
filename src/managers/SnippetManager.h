@@ -1,4 +1,3 @@
-# 1 "./src/managers/SnippetManager.h"
 #ifndef SNIPPETMANAGER_H
 #define SNIPPETMANAGER_H
 

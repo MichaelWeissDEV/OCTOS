@@ -172,15 +172,20 @@ bool AssemblyTextProcessor::hasUsefulContentAfter(const QStringList& lines, int 
 QString AssemblyTextProcessor::stripComments(const QString& line) {
     int hashIndex = line.indexOf('#');
     int semicolonIndex = line.indexOf(';');
-    int cutIndex = -1;
+    int doubleSlashIndex = line.indexOf("//");
 
-    if (hashIndex >= 0 && semicolonIndex >= 0) {
-        cutIndex = qMin(hashIndex, semicolonIndex);
-    } else if (hashIndex >= 0) {
-        cutIndex = hashIndex;
-    } else if (semicolonIndex >= 0) {
-        cutIndex = semicolonIndex;
-    }
+    int cutIndex = -1;
+    auto updateCut = [&cutIndex](int idx) {
+        if (idx >= 0) {
+            if (cutIndex < 0 || idx < cutIndex) {
+                cutIndex = idx;
+            }
+        }
+    };
+
+    updateCut(hashIndex);
+    updateCut(semicolonIndex);
+    updateCut(doubleSlashIndex);
 
     if (cutIndex >= 0) {
         QString without = line.left(cutIndex);
@@ -189,6 +194,7 @@ QString AssemblyTextProcessor::stripComments(const QString& line) {
     }
     return line;
 }
+
 
 int AssemblyTextProcessor::extractSourceLine(const QString& line, int previousLine) {
     QRegularExpressionMatch match = kLocRegex.match(line.trimmed());

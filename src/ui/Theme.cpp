@@ -1,4 +1,3 @@
-# 1 "./src/ui/Theme.cpp"
 #include "Theme.h"
 
 #include <QStringList>

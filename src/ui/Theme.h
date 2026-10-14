@@ -1,4 +1,3 @@
-# 1 "./src/ui/Theme.h"
 #ifndef THEME_H
 #define THEME_H
 

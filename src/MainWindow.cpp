@@ -1,5 +1,5 @@
-# 1 "./src/MainWindow.cpp"
 #include "MainWindow.h"
+#include "backend/JobManager.h"
 
 #include <QAction>
 #include <QApplication>
@@ -7,6 +7,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -21,14 +22,16 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QSpacerItem>
-#include <QTabWidget>
+#include <QSplitter>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "core/AppSettings.h"
 #include "managers/RecentFilesManager.h"
 #include "managers/SnippetManager.h"
+#include "strategies/LanguageStrategyRegistry.h"
 #include "ui/Theme.h"
 
 CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
@@ -144,49 +147,46 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
-      m_inputEditor(nullptr),
-      m_sourceEditorContainer(nullptr),
-      m_splitter(nullptr),
-      m_outputSplitter(nullptr),
-      m_addPaneButton(nullptr),
-      m_highlightToggle(nullptr),
-      m_highlightMode(0),
-      m_filterShowSegmentDirectives(nullptr),
-      m_filterShowDataDirectives(nullptr),
-      m_filterShowCfiDirectives(nullptr),
-      m_filterShowMetadataLabels(nullptr),
-      m_filterShowUnusedLabels(nullptr),
-      m_filterShowDebugInfo(nullptr),
-      m_filterShowComments(nullptr),
-      m_filterDemangle(nullptr),
-      m_debounceTimer(nullptr),
-      m_dockerManager(nullptr),
-      m_cppHighlighter(nullptr),
       m_currentTheme(ThemeType::Dark) {
     setAcceptDrops(true);
 
     m_dockerManager = new DockerCompilerManager(this);
-    connect(m_dockerManager, &DockerCompilerManager::compilationFinished, this,
-            &MainWindow::onCompilationFinished);
+    connect(m_dockerManager, &DockerCompilerManager::compilationResultReceived, this,
+            &MainWindow::onCompilationResultReceived);
 
     setupUi();
 
     m_debounceTimer = new QTimer(this);
     m_debounceTimer->setSingleShot(true);
-    m_debounceTimer->setInterval(300);
+    m_debounceTimer->setInterval(AppSettings::instance().debounceIntervalMs());
 
     connect(m_inputEditor, &QPlainTextEdit::textChanged, this, &MainWindow::onInputTextChanged);
+    connect(m_inputEditor->document(), &QTextDocument::modificationChanged, this,
+            &MainWindow::onDocumentModificationChanged);
     connect(m_inputEditor, &QPlainTextEdit::cursorPositionChanged, this,
             &MainWindow::onSourceCursorPositionChanged);
     connect(m_debounceTimer, &QTimer::timeout, this, &MainWindow::doCompile);
 
     qApp->setStyle("Fusion");
-    qApp->setStyleSheet(Theme::getDarkStylesheet());
+    int savedTheme = AppSettings::instance().themeIndex();
+    onChangeTheme(savedTheme);
 
     refreshDockerCompilerList();
+    updateWindowTitle();
 }
 
-MainWindow::~MainWindow() {}
+MainWindow::~MainWindow() = default;
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (maybeSave()) {
+        if (m_dockerManager && m_dockerManager->jobManager()) {
+            m_dockerManager->jobManager()->shutdown();
+        }
+        event->accept();
+    } else {
+        event->ignore();
+    }
+}
 
 void MainWindow::setupUi() {
     QWidget* centralWidget = new QWidget(this);
@@ -196,41 +196,42 @@ void MainWindow::setupUi() {
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    QToolBar* toolBar = addToolBar("Main Toolbar");
-    toolBar->setMovable(false);
-    toolBar->setIconSize(QSize(16, 16));
-    toolBar->setStyleSheet("QToolBar { border-bottom: 1px solid #3e3e42; padding: 4px; }");
+    // File Menu
+    QMenu* fileMenu = menuBar()->addMenu("&File");
+    QAction* newAction = fileMenu->addAction("&New");
+    newAction->setShortcut(QKeySequence::New);
+    connect(newAction, &QAction::triggered, this, &MainWindow::onNew);
 
-    QMenu* toolsMenu = new QMenu("Tools", this);
-    QAction* dockerCompilersAction = toolsMenu->addAction("Docker Compiler Manager");
-    connect(dockerCompilersAction, &QAction::triggered, this, &MainWindow::onManageDockerCompilers);
+    QAction* openAction = fileMenu->addAction("&Open...");
+    openAction->setShortcut(QKeySequence::Open);
+    connect(openAction, &QAction::triggered, this, &MainWindow::onLoad);
 
-    toolsMenu->addSeparator();
-    QMenu* snippetsMenu = toolsMenu->addMenu("Insert Snippet");
-    QStringList snippetNames = m_snippetManager.getAllSnippetNames();
-    for (const QString& name : snippetNames) {
-        QAction* snippetAction = snippetsMenu->addAction(name);
-        connect(snippetAction, &QAction::triggered, this, [this]() { onInsertSnippet(); });
-    }
+    m_recentMenu = fileMenu->addMenu("Recent Files");
+    updateRecentFilesMenu();
 
-    toolsMenu->addSeparator();
-    QMenu* themeMenu = toolsMenu->addMenu("Theme");
-    QStringList themes = Theme::getAvailableThemes();
-    for (int i = 0; i < themes.size(); ++i) {
-        QAction* themeAction = themeMenu->addAction(themes[i]);
-        themeAction->setData(i);
-        connect(themeAction, &QAction::triggered, this, [this, i]() { onChangeTheme(i); });
-    }
+    fileMenu->addSeparator();
 
+    QAction* saveAction = fileMenu->addAction("&Save");
+    saveAction->setShortcut(QKeySequence::Save);
+    connect(saveAction, &QAction::triggered, this, &MainWindow::onSave);
 
+    QAction* saveAsAction = fileMenu->addAction("Save &As...");
+    saveAsAction->setShortcut(QKeySequence::SaveAs);
+    connect(saveAsAction, &QAction::triggered, this, &MainWindow::onSaveAs);
 
-    QMenu* filtersMenu = new QMenu("Filters", this);
+    fileMenu->addSeparator();
+
+    QAction* exitAction = fileMenu->addAction("E&xit");
+    exitAction->setShortcut(QKeySequence::Quit);
+    connect(exitAction, &QAction::triggered, this, &QWidget::close);
+
+    // Filters Menu
+    QMenu* filtersMenu = menuBar()->addMenu("F&ilters");
 
     m_filterShowSegmentDirectives = new QAction("Show Segment Directives", this);
     m_filterShowSegmentDirectives->setCheckable(true);
     m_filterShowSegmentDirectives->setChecked(m_filterSettings.showSegmentDirectives);
-    connect(m_filterShowSegmentDirectives, &QAction::triggered, this,
-            &MainWindow::onRefilterOutput);
+    connect(m_filterShowSegmentDirectives, &QAction::triggered, this, &MainWindow::onRefilterOutput);
     filtersMenu->addAction(m_filterShowSegmentDirectives);
 
     m_filterShowDataDirectives = new QAction("Show Data Directives", this);
@@ -281,43 +282,35 @@ void MainWindow::setupUi() {
     connect(m_filterDemangle, &QAction::triggered, this, &MainWindow::onRefilterOutput);
     filtersMenu->addAction(m_filterDemangle);
 
+    // Tools Menu
+    QMenu* toolsMenu = menuBar()->addMenu("&Tools");
+    QAction* dockerCompilersAction = toolsMenu->addAction("Docker &Compiler Manager...");
+    connect(dockerCompilersAction, &QAction::triggered, this, &MainWindow::onManageDockerCompilers);
 
-
-    QMenu* fileMenu = new QMenu("File", this);
-    QAction* newAction = fileMenu->addAction("New");
-    newAction->setShortcut(Qt::CTRL | Qt::Key_N);
-    connect(newAction, &QAction::triggered, this, [this]() {
-        m_inputEditor->clear();
-        m_currentFile = "";
-    });
-
-    QAction* openAction = fileMenu->addAction("Open");
-    openAction->setShortcut(Qt::CTRL | Qt::Key_O);
-    connect(openAction, &QAction::triggered, this, &MainWindow::onLoad);
-
-    fileMenu->addSeparator();
-    QMenu* recentMenu = fileMenu->addMenu("Recent Files");
-    QStringList recentFiles = m_recentFilesManager.getRecentFiles();
-    if (recentFiles.isEmpty()) {
-        QAction* noRecentAction = recentMenu->addAction("(no recent files)");
-        noRecentAction->setEnabled(false);
-    } else {
-        for (const QString& file : recentFiles) {
-            QAction* fileAction = recentMenu->addAction(file);
-            connect(fileAction, &QAction::triggered, this, [this, file]() { loadFile(file); });
-        }
-        recentMenu->addSeparator();
-        QAction* clearAction = recentMenu->addAction("Clear Recent Files");
-        connect(clearAction, &QAction::triggered, this, &MainWindow::onClearRecentFiles);
+    toolsMenu->addSeparator();
+    QMenu* snippetsMenu = toolsMenu->addMenu("Insert &Snippet");
+    QStringList snippetNames = m_snippetManager.getAllSnippetNames();
+    for (const QString& name : snippetNames) {
+        QAction* snippetAction = snippetsMenu->addAction(name);
+        connect(snippetAction, &QAction::triggered, this, &MainWindow::onInsertSnippet);
     }
 
-    fileMenu->addSeparator();
-    QAction* saveAction = fileMenu->addAction("Save");
-    saveAction->setShortcut(Qt::CTRL | Qt::Key_S);
-    connect(saveAction, &QAction::triggered, this, &MainWindow::onSave);
-    menuBar()->addMenu(fileMenu);
-    menuBar()->addMenu(filtersMenu);
-    menuBar()->addMenu(toolsMenu);
+    toolsMenu->addSeparator();
+    QMenu* themeMenu = toolsMenu->addMenu("&Theme");
+    QStringList themes = Theme::getAvailableThemes();
+    for (int i = 0; i < themes.size(); ++i) {
+        QAction* themeAction = themeMenu->addAction(themes[i]);
+        themeAction->setData(i);
+        connect(themeAction, &QAction::triggered, this, [this, i]() { onChangeTheme(i); });
+    }
+
+    toolsMenu->addSeparator();
+    QAction* autoCompileAction = toolsMenu->addAction("Auto-Compile on change");
+    autoCompileAction->setCheckable(true);
+    autoCompileAction->setChecked(AppSettings::instance().autoCompile());
+    connect(autoCompileAction, &QAction::toggled, this, [](bool enabled) {
+        AppSettings::instance().setAutoCompile(enabled);
+    });
 
     m_splitter = new QSplitter(Qt::Horizontal);
 
@@ -421,12 +414,13 @@ void MainWindow::setupUi() {
             &MainWindow::onPaneSettingsChanged);
 
     m_outputPanes.append(initialPane);
+    m_paneLookup[initialPane->paneId()] = initialPane;
     m_outputSplitter->addWidget(initialPane);
 
     AsmHighlighter* highlighter = new AsmHighlighter(initialPane->getEditor()->document());
     m_asmHighlighters.append(highlighter);
 
-    initialPane->setCloseButtonVisible(true);
+    initialPane->setCloseButtonVisible(false); // First pane cannot be closed if alone
 
     m_splitter->addWidget(m_sourceEditorContainer);
     m_splitter->addWidget(m_outputSplitter);
@@ -453,6 +447,7 @@ void MainWindow::onAddComparisonPane() {
     connect(newPane, &CompilerOutputPane::syntaxChanged, this, &MainWindow::onPaneSettingsChanged);
 
     m_outputPanes.append(newPane);
+    m_paneLookup[newPane->paneId()] = newPane;
     m_outputSplitter->addWidget(newPane);
 
     refreshDockerCompilerList();
@@ -461,10 +456,13 @@ void MainWindow::onAddComparisonPane() {
     m_asmHighlighters.append(highlighter);
 
     newPane->setCloseButtonVisible(true);
+    if (m_outputPanes.size() > 1) {
+        m_outputPanes.first()->setCloseButtonVisible(true);
+    }
 
     QList<int> sizes;
     int totalWidth = m_outputSplitter->width();
-    int paneWidth = totalWidth / m_outputPanes.size();
+    int paneWidth = qMax(100, totalWidth / m_outputPanes.size());
     for (int i = 0; i < m_outputPanes.size(); ++i) {
         sizes.append(paneWidth);
     }
@@ -482,25 +480,28 @@ void MainWindow::onCloseOtherPanes() {
         CompilerOutputPane* pane = m_outputPanes.last();
         onRemovePane(pane);
     }
+
+    if (!m_outputPanes.isEmpty()) {
+        m_outputPanes.first()->setCloseButtonVisible(false);
+    }
 }
 
 void MainWindow::onRemovePane(CompilerOutputPane* pane) {
     int index = m_outputPanes.indexOf(pane);
     if (index >= 0) {
+        quint64 paneId = pane->paneId();
+        m_dockerManager->jobManager()->invalidatePane(paneId);
+
         m_outputPanes.removeAt(index);
+        m_paneLookup.remove(paneId);
 
         if (index < m_asmHighlighters.size()) {
             delete m_asmHighlighters[index];
             m_asmHighlighters.removeAt(index);
         }
 
-        for (auto it = m_jobToPaneMap.begin(); it != m_jobToPaneMap.end();) {
-            if (it.value() == pane) {
-                m_dockerManager->cancelJob(it.key());
-                it = m_jobToPaneMap.erase(it);
-            } else {
-                ++it;
-            }
+        if (m_outputPanes.size() == 1) {
+            m_outputPanes.first()->setCloseButtonVisible(false);
         }
 
         pane->deleteLater();
@@ -510,13 +511,9 @@ void MainWindow::onRemovePane(CompilerOutputPane* pane) {
 void MainWindow::refreshDockerCompilerList() {
     QVector<DockerImage> installedImages = m_dockerManager->listInstalledImages();
 
-    QStringList compilerList;
-    for (const DockerImage& image : installedImages) {
-        compilerList.append(image.fullName);
-    }
-
     for (CompilerOutputPane* pane : m_outputPanes) {
-        pane->setCompilerList(compilerList);
+        QStringList compilers = getCompilersForLanguage(pane->getLanguage());
+        pane->setCompilerList(compilers);
     }
 }
 
@@ -527,42 +524,35 @@ QStringList MainWindow::getCompilersForLanguage(Language lang) {
     for (const DockerImage& image : installedImages) {
         QString imageName = image.fullName.toLower();
 
-        // Map languages to compiler image keywords
         switch (lang) {
             case Language::Cpp:
             case Language::C:
-                // C/C++ compilers: gcc, clang, g++
                 if (imageName.contains("gcc") || imageName.contains("clang")) {
                     filtered.append(image.fullName);
                 }
                 break;
             case Language::Rust:
-                // Rust compiler: rustc
                 if (imageName.contains("rust")) {
                     filtered.append(image.fullName);
                 }
                 break;
             case Language::Java:
-                // Java compilers: openjdk, eclipse-temurin
                 if (imageName.contains("openjdk") || imageName.contains("eclipse-temurin") ||
                     imageName.contains("temurin") || imageName.contains("java")) {
                     filtered.append(image.fullName);
                 }
                 break;
             case Language::Python:
-                // Python interpreter
                 if (imageName.contains("python")) {
                     filtered.append(image.fullName);
                 }
                 break;
             case Language::CSharp:
-                // C# compiler: mono, csc
                 if (imageName.contains("mono") || imageName.contains("csharp")) {
                     filtered.append(image.fullName);
                 }
                 break;
             case Language::Ada:
-                // Ada compiler: gcc (has gnat built-in)
                 if (imageName.contains("gcc")) {
                     filtered.append(image.fullName);
                 }
@@ -570,7 +560,6 @@ QStringList MainWindow::getCompilersForLanguage(Language lang) {
         }
     }
 
-    // If no specific compilers found, return all (fallback)
     if (filtered.isEmpty()) {
         for (const DockerImage& image : installedImages) {
             filtered.append(image.fullName);
@@ -581,16 +570,29 @@ QStringList MainWindow::getCompilersForLanguage(Language lang) {
 }
 
 void MainWindow::onPaneLanguageChanged(Language lang, CompilerOutputPane* pane) {
-    // Update compiler list for this pane based on selected language
     QStringList compilers = getCompilersForLanguage(lang);
     pane->setCompilerList(compilers);
 }
 
 void MainWindow::updateCompilerLists() { refreshDockerCompilerList(); }
 
-void MainWindow::onInputTextChanged() { m_debounceTimer->start(); }
+void MainWindow::onInputTextChanged() {
+    m_inputRevision++;
+    if (AppSettings::instance().autoCompile()) {
+        m_debounceTimer->start(AppSettings::instance().debounceIntervalMs());
+    }
+}
 
-void MainWindow::onPaneSettingsChanged() { m_debounceTimer->start(); }
+void MainWindow::onPaneSettingsChanged() {
+    m_inputRevision++;
+    if (AppSettings::instance().autoCompile()) {
+        m_debounceTimer->start(AppSettings::instance().debounceIntervalMs());
+    }
+}
+
+void MainWindow::onDocumentModificationChanged(bool /*modified*/) {
+    updateWindowTitle();
+}
 
 void MainWindow::doCompile() { compileAllPanes(); }
 
@@ -600,11 +602,11 @@ void MainWindow::compileAllPanes() {
     if (source.trimmed().isEmpty()) {
         for (CompilerOutputPane* pane : m_outputPanes) {
             pane->setOutputText("No source code to compile");
+            pane->setStatus("");
         }
         return;
     }
 
-    int jobsSubmitted = 0;
     for (CompilerOutputPane* pane : m_outputPanes) {
         QString compiler = pane->getSelectedCompiler();
         QString flags = pane->getCompilerFlags();
@@ -612,70 +614,54 @@ void MainWindow::compileAllPanes() {
         SyntaxFlavor syntax = pane->getSyntaxFlavor();
 
         if (compiler.isEmpty()) {
-            pane->setOutputText("No Docker Images found - Please open Compiler Manager");
+            pane->setOutputText("No Docker Images installed. Please open Tools > Docker Compiler Manager to pull a compiler image.", true);
+            pane->setStatus("No Image", true);
             continue;
         }
 
-        QString language = "cpp";
-        switch (lang) {
-            case Language::C:
-                language = "c";
-                break;
-            case Language::Cpp:
-                language = "cpp";
-                break;
-            case Language::Rust:
-                language = "rust";
-                break;
-            case Language::Java:
-                language = "java";
-                break;
-            case Language::Python:
-                language = "python";
-                break;
-            case Language::CSharp:
-                language = "csharp";
-                break;
-            case Language::Ada:
-                language = "ada";
-                break;
-        }
+        CompilationRequest req;
+        req.paneId = pane->paneId();
+        req.revision = m_inputRevision;
+        req.sourceCode = source;
+        req.compilerImage = compiler;
+        req.language = lang;
+        req.syntaxFlavor = syntax;
+        req.userArgs = flags;
+        req.timeoutMs = 30000;
 
-        QString fullFlags = flags;
-        if (syntax == SyntaxFlavor::Intel) {
-            if (!fullFlags.contains("-masm=")) {
-                fullFlags += " -masm=intel";
-            }
-        } else if (syntax == SyntaxFlavor::ATT) {
-            if (!fullFlags.contains("-masm=")) {
-                fullFlags += " -masm=att";
-            }
-        }
-
-        if (!fullFlags.contains("-g")) {
-            fullFlags += " -g";
-        }
-
-        int jobId = m_dockerManager->submitCompilationJob(source, compiler, fullFlags, language);
-        m_jobToPaneMap[jobId] = pane;
-        pane->setCurrentJobId(jobId);
-        pane->setOutputText("Compiling...");
-
-        jobsSubmitted++;
+        pane->setStatus("Compiling...");
+        quint64 jobId = m_dockerManager->submitRequest(req);
+        pane->setCurrentJobId(static_cast<int>(jobId));
     }
 }
 
-void MainWindow::onCompilationFinished(int jobId, const CompilationOutput& output) {
-    if (!m_jobToPaneMap.contains(jobId)) {
+void MainWindow::onCompilationResultReceived(const CompilationResult& result) {
+    CompilerOutputPane* pane = m_paneLookup.value(result.paneId, nullptr);
+    if (!pane) {
         return;
     }
 
-    CompilerOutputPane* pane = m_jobToPaneMap[jobId];
-    m_jobToPaneMap.remove(jobId);
+    // Verify revision: discard outdated job results
+    if (result.revision < m_inputRevision) {
+        return;
+    }
 
-    if (output.success) {
-        QString rawAssembly = output.stdout_;
+    if (result.state == JobState::Cancelled) {
+        pane->setStatus("Cancelled");
+        return;
+    }
 
+    if (result.state == JobState::TimedOut) {
+        pane->setStatus("Timeout", true);
+        pane->setRawAssembly(QString());
+        pane->setAssemblyLineMapping({});
+        pane->setOutputText(result.errorOutput, true);
+        return;
+    }
+
+    if (result.success()) {
+        pane->setStatus("Success");
+        QString rawAssembly = result.assemblyOutput;
         pane->setRawAssembly(rawAssembly);
 
         m_filterSettings.showSegmentDirectives = m_filterShowSegmentDirectives->isChecked();
@@ -697,34 +683,70 @@ void MainWindow::onCompilationFinished(int jobId, const CompilationOutput& outpu
             applyHighlighting();
         }
     } else {
-        QString errorText;
-
-        if (!output.stderr_.isEmpty()) {
-            errorText = output.stderr_;
+        pane->setStatus("Failed", true);
+        QString errorText = result.errorOutput;
+        if (errorText.trimmed().isEmpty()) {
+            errorText = result.rawOutput;
         }
-
-        if (!output.stdout_.isEmpty()) {
-            if (!errorText.isEmpty()) {
-                errorText += "\n";
-            }
-            errorText += output.stdout_;
-        }
-
-        if (errorText.isEmpty()) {
-            errorText = "Compilation failed with exit code: " + QString::number(output.exitCode);
+        if (errorText.trimmed().isEmpty()) {
+            errorText = "Compilation failed with exit code: " + QString::number(result.exitCode);
         }
 
         pane->setRawAssembly(QString());
         pane->setAssemblyLineMapping({});
-        pane->setOutputText(errorText, false);
+        pane->setOutputText(errorText, true);
     }
 }
 
+bool MainWindow::maybeSave() {
+    if (!m_inputEditor->document()->isModified()) {
+        return true;
+    }
+
+    QString docName = m_currentFile.isEmpty() ? "Untitled" : QFileInfo(m_currentFile).fileName();
+    QMessageBox::StandardButton reply = QMessageBox::warning(
+        this, "Save Changes",
+        QString("The document '%1' has unsaved changes.\nDo you want to save your changes?").arg(docName),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+    if (reply == QMessageBox::Save) {
+        if (m_currentFile.isEmpty()) {
+            onSaveAs();
+        } else {
+            saveFile(m_currentFile);
+        }
+        return !m_inputEditor->document()->isModified();
+    } else if (reply == QMessageBox::Cancel) {
+        return false;
+    }
+
+    return true;
+}
+
+void MainWindow::onNew() {
+    if (!maybeSave()) return;
+    m_inputEditor->clear();
+    m_currentFile.clear();
+    m_inputEditor->document()->setModified(false);
+    updateWindowTitle();
+}
+
 void MainWindow::onSave() {
-    QString fileName =
-        QFileDialog::getSaveFileName(this, "Save File", m_currentFile,
-                                     "C++ Files (*.cpp *.h);;C Files (*.c *.h);;Rust Files "
-                                     "(*.rs);;C# Files (*.cs);;Java Files (*.java);;All Files (*)");
+    if (m_currentFile.isEmpty()) {
+        onSaveAs();
+    } else {
+        saveFile(m_currentFile);
+    }
+}
+
+void MainWindow::onSaveAs() {
+    QString startDir = m_currentFile.isEmpty()
+                           ? AppSettings::instance().lastDirectory()
+                           : m_currentFile;
+
+    QString fileName = QFileDialog::getSaveFileName(
+        this, "Save File", startDir,
+        "C++ Files (*.cpp *.h);;C Files (*.c *.h);;Rust Files (*.rs);;Java Files (*.java);;Python Files (*.py);;C# Files (*.cs);;Ada Files (*.adb *.ads);;All Files (*)");
 
     if (!fileName.isEmpty()) {
         saveFile(fileName);
@@ -732,21 +754,26 @@ void MainWindow::onSave() {
 }
 
 void MainWindow::onLoad() {
+    if (!maybeSave()) return;
+
+    QString startDir = m_currentFile.isEmpty()
+                           ? AppSettings::instance().lastDirectory()
+                           : m_currentFile;
+
     QString fileName = QFileDialog::getOpenFileName(
-        this, "Open File", m_currentFile,
-        "All Files (*);;C++ Files (*.cpp *.h);;C Files (*.c *.h);;Rust Files (*.rs);;C# Files "
-        "(*.cs);;Java Files (*.java)");
+        this, "Open File", startDir,
+        "All Supported (*.cpp *.c *.h *.rs *.java *.py *.cs *.adb *.ads);;C++ Files (*.cpp *.h);;C Files (*.c *.h);;Rust Files (*.rs);;Java Files (*.java);;Python Files (*.py);;C# Files (*.cs);;All Files (*)");
 
     if (!fileName.isEmpty()) {
         loadFile(fileName);
     }
 }
 
-void MainWindow::saveFile(const QString& filePath) {
+bool MainWindow::saveFile(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Error", "Could not save file: " + filePath);
-        return;
+        QMessageBox::warning(this, "Save Error", "Could not save file: " + filePath);
+        return false;
     }
 
     QTextStream out(&file);
@@ -754,13 +781,20 @@ void MainWindow::saveFile(const QString& filePath) {
     file.close();
 
     m_currentFile = filePath;
-    QFileInfo fileInfo(filePath);
+    m_inputEditor->document()->setModified(false);
+    m_recentFilesManager.addRecentFile(filePath);
+    AppSettings::instance().setLastDirectory(QFileInfo(filePath).absolutePath());
+    updateRecentFilesMenu();
+    updateWindowTitle();
+    return true;
 }
 
 void MainWindow::loadFile(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Error", "Could not open file: " + filePath);
+        QMessageBox::warning(this, "Open Error", "Could not open file: " + filePath);
+        m_recentFilesManager.removeRecentFile(filePath);
+        updateRecentFilesMenu();
         return;
     }
 
@@ -770,6 +804,59 @@ void MainWindow::loadFile(const QString& filePath) {
 
     m_inputEditor->setPlainText(content);
     m_currentFile = filePath;
+    m_inputEditor->document()->setModified(false);
+    m_recentFilesManager.addRecentFile(filePath);
+    AppSettings::instance().setLastDirectory(QFileInfo(filePath).absolutePath());
+    updateRecentFilesMenu();
+    updateWindowTitle();
+
+    // Automatically adapt pane language to file extension if recognized
+    QString ext = QFileInfo(filePath).suffix().toLower();
+    Language detectedLang = Language::Cpp;
+    if (ext == "c") detectedLang = Language::C;
+    else if (ext == "rs") detectedLang = Language::Rust;
+    else if (ext == "java") detectedLang = Language::Java;
+    else if (ext == "py") detectedLang = Language::Python;
+    else if (ext == "cs") detectedLang = Language::CSharp;
+    else if (ext == "adb" || ext == "ads") detectedLang = Language::Ada;
+
+    if (!m_outputPanes.isEmpty()) {
+        m_outputPanes.first()->setLanguage(detectedLang);
+    }
+
+    doCompile();
+}
+
+void MainWindow::updateRecentFilesMenu() {
+    if (!m_recentMenu) return;
+
+    m_recentMenu->clear();
+    QStringList recentFiles = m_recentFilesManager.getRecentFiles();
+
+    if (recentFiles.isEmpty()) {
+        QAction* noRecent = m_recentMenu->addAction("(no recent files)");
+        noRecent->setEnabled(false);
+    } else {
+        for (const QString& file : recentFiles) {
+            QAction* act = m_recentMenu->addAction(file);
+            connect(act, &QAction::triggered, this, [this, file]() {
+                if (maybeSave()) {
+                    loadFile(file);
+                }
+            });
+        }
+        m_recentMenu->addSeparator();
+        QAction* clearAct = m_recentMenu->addAction("Clear Recent Files");
+        connect(clearAct, &QAction::triggered, this, &MainWindow::onClearRecentFiles);
+    }
+}
+
+void MainWindow::updateWindowTitle() {
+    QString docName = m_currentFile.isEmpty() ? "Untitled" : QFileInfo(m_currentFile).fileName();
+    if (m_inputEditor && m_inputEditor->document()->isModified()) {
+        docName += "*";
+    }
+    setWindowTitle(QString("OCTOS - %1 - Offline Compiler Tool / Assembly Analyzer").arg(docName));
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
@@ -785,7 +872,9 @@ void MainWindow::dropEvent(QDropEvent* event) {
         QList<QUrl> urls = mimeData->urls();
         if (!urls.isEmpty()) {
             QString filePath = urls.first().toLocalFile();
-            loadFile(filePath);
+            if (maybeSave()) {
+                loadFile(filePath);
+            }
         }
     }
 }
@@ -796,8 +885,6 @@ void MainWindow::onManageDockerCompilers() {
         refreshDockerCompilerList();
     }
 }
-
-void MainWindow::onOpenRecentFile() {}
 
 void MainWindow::onInsertSnippet() {
     QAction* action = qobject_cast<QAction*>(sender());
@@ -812,7 +899,7 @@ void MainWindow::onInsertSnippet() {
         } else {
             QMessageBox::StandardButton reply = QMessageBox::question(
                 this, "Insert Snippet",
-                "Do you want to replace the current code or append the snippet?",
+                "Do you want to replace current code (Yes) or append snippet (No)?",
                 QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
 
             if (reply == QMessageBox::Yes) {
@@ -831,6 +918,7 @@ void MainWindow::onInsertSnippet() {
 
 void MainWindow::onChangeTheme(int index) {
     m_currentTheme = static_cast<ThemeType>(index);
+    AppSettings::instance().setThemeIndex(index);
     QString stylesheet = Theme::getStylesheet(m_currentTheme);
     qApp->setStyleSheet(stylesheet);
 }
@@ -842,6 +930,7 @@ void MainWindow::onClearRecentFiles() {
 
     if (reply == QMessageBox::Yes) {
         m_recentFilesManager.clearRecentFiles();
+        updateRecentFilesMenu();
     }
 }
 

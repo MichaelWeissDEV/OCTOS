@@ -1,4 +1,3 @@
-# 1 "./src/managers/SnippetManager.cpp"
 #include "SnippetManager.h"
 
 SnippetManager::SnippetManager() { loadDefaultSnippets(); }

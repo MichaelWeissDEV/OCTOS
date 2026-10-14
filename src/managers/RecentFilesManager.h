@@ -1,4 +1,3 @@
-# 1 "./src/managers/RecentFilesManager.h"
 #ifndef RECENTFILESMANAGER_H
 #define RECENTFILESMANAGER_H
 
