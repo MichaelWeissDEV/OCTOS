@@ -67,7 +67,7 @@ make -j$(nproc)
 
 ---
 
-##  macOS (NOTE: Not Officially Tested)
+##  macOS (developed and tested on Apple Silicon, macOS 26, Qt 6.11, Apple clang 21)
 
 ### Using Homebrew
 
@@ -111,3 +111,56 @@ make -j$(sysctl -n hw.ncpu)
 ##  Windows (NOTE: Not Officially Tested and WSL2 Recommended)
 
 
+
+
+---
+
+## After building: verify the installation
+
+```bash
+# 1. the tests (headless)
+cd build && ctest --output-on-failure
+
+# 2. Docker is reachable
+docker info --format '{{.ServerVersion}} {{.Architecture}}'
+```
+
+`Architecture` tells you which assembly you will see: `x86_64` → x86-64, `aarch64` → AArch64 (Apple Silicon,
+ARM Linux).
+
+Then start `./OCTOS`, open **Tools ▸ Docker Compiler Manager…**, check the banner is green, download one image
+(e.g. `gcc:13`), click **Verify**, and follow [Getting Started](getting-started.md).
+
+## Build options
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `-DBUILD_TESTING=OFF` | ON | skip tests (and the need for Qt Test) |
+| `-DOCTOS_BUILD_BENCHMARKS=OFF` | ON | skip `octos_bench` |
+| `-DOCTOS_BUILD_FUZZERS=ON` | OFF | libFuzzer targets (needs a fuzzer-capable clang) |
+| `-DCMAKE_BUILD_TYPE=Release` | — | optimised build; run Debug **and** Release before contributing |
+
+More: [Building & Running](development/building.md).
+
+## Tested configurations
+
+| Platform | Compiler | Qt | Status |
+| --- | --- | --- | --- |
+| macOS 26 / Apple Silicon | Apple clang 21 | 6.11 | full suite (Debug, Release, ASan+UBSan, TSan) |
+| Ubuntu 22.04 | GCC (CI) | 6.2 | built and tested by CI; not verified locally by the maintainer of this change |
+| Windows | — | — | not tested; WSL2 recommended |
+
+## Docker notes
+
+* **macOS/Windows**: Docker Desktop must be *running*. Containers live in a virtual disk with a size limit;
+  "no space left on device" means that disk is full ([Troubleshooting](troubleshooting.md)).
+* **Linux**: add your user to the `docker` group or run OCTOS as a user that may use the socket.
+* GUI applications on macOS may not inherit the shell `PATH`; `docker` must be found in the environment the
+  application starts with (`/usr/local/bin` or `/opt/homebrew/bin`).
+
+## Uninstalling and cleaning up
+
+* Delete the build directory / the installed binary.
+* Settings: see [Settings](reference/settings.md) for the location (or delete the store).
+* Docker images that OCTOS downloaded stay until you delete them in the Compiler Manager (or `docker rmi`).
+* Leftover containers (only after a crash) are named `octos_<pid>_<job>`: `docker ps -a --filter name=octos_`.

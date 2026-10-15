@@ -7,6 +7,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include "MainWindow.h"
+#include "core/AppSettings.h"
 
 namespace {
 double luminanceOf(QRgb p) {
@@ -35,6 +36,7 @@ private slots:
     void testStartsAndRendersEveryTheme();
     void testCompileResultIsPresented();
     void testArtifactViewerAndDiagnostics();
+    void testCompileNowWorksWithAutoCompileOff();
 };
 
 void TestMainWindow::testStartsAndRendersEveryTheme() {
@@ -101,6 +103,25 @@ void TestMainWindow::testCompileResultIsPresented() {
     for (QLabel* l : pane->findChildren<QLabel*>())
         if (l->text().contains("Docker error")) dockerBadge = true;
     QVERIFY(dockerBadge);
+}
+
+void TestMainWindow::testCompileNowWorksWithAutoCompileOff() {
+    AppSettings::instance().setAutoCompile(false);
+    MainWindow w;
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    QAction* act = nullptr;
+    for (QAction* a : w.findChildren<QAction*>()) if (a->text().contains("Compile") && a->text().contains("Now")) act = a;
+    QVERIFY(act);
+    QVERIFY(act->shortcuts().contains(QKeySequence(Qt::Key_F5)));
+    w.activeEditor()->setPlainText("int main() { return 0; }");
+    CompilerOutputPane* pane = w.findChildren<CompilerOutputPane*>().first();
+    auto statusText = [&]() { QStringList t; for (QLabel* l : pane->findChildren<QLabel*>()) t << l->text(); return t.join("|"); };
+    QVERIFY2(!statusText().contains("No Image") && !statusText().contains("Compiling"), "auto-compile is off: nothing may run on typing");
+    act->trigger();
+    // Without an installed compiler the pane reports it instead of staying silent.
+    QVERIFY2(statusText().contains("No Image") || statusText().contains("Compiling"), qPrintable(statusText()));
+    AppSettings::instance().setAutoCompile(true);
 }
 
 void TestMainWindow::testArtifactViewerAndDiagnostics() {

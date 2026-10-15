@@ -1,80 +1,87 @@
 # Architecture Overview
 
-OCTOS follows a decoupled architecture separating UI presentation from compilation logic, job scheduling, and container execution.
+OCTOS separates *presentation* (`octos_ui`) from *logic* (`octos_core`). Core has no widgets, so everything
+important can be tested headlessly.
 
-## Core Architecture (`octos_core`)
-
-All core logic resides in the `octos_core` library, enabling headless testing and clean dependency boundaries:
+## Layers
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                      GUI Layer                         │
-│  MainWindow, CompilerOutputPane, Highlighters, Theme   │
-└───────────────────────────┬────────────────────────────┘
-                            │ (CompilationRequest / Qt Signals)
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│                     JobManager                         │
-│  - Bounded scheduler queue   - Revision invalidation   │
-│  - Job state transitions     - Cancellation / shutdown │
-└───────────────────────────┬────────────────────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-┌───────────────────────────┐ ┌───────────────────────────┐
-│   Language Strategies     │ │   Execution Backend       │
-│ - GCC / Clang Strategy    │ │ - DockerExecutionBackend  │
-│ - Rust Strategy           │ │   (Resource limits,       │
-│ - Java Strategy           │ │    network isolation)     │
-│ - Python Strategy         │ │ - MockExecutionBackend    │
-│ - C# / Ada Strategy       │ │   (Automated test suite)  │
-└───────────────────────────┘ └───────────────────────────┘
+┌───────────────────────────────── octos_ui ──────────────────────────────────┐
+│ MainWindow · CompilerOutputPane · AnalysisPanel · DiffDialog · Project dock │
+│ CodeEditor · highlighters · Theme (tokens, roles)                            │
+└──────────────┬───────────────────────────────────────────────┬──────────────┘
+   CompilationRequest / jobFinished(CompilationResult)          │ Workspace / profiles
+┌──────────────▼──────────────┐  ┌──────────────────────┐  ┌───▼───────────────┐
+│ DockerCompilerManager       │  │ AssemblyParser       │  │ ProjectController │
+│  images · probes · ownership│  │ AssemblyDiffProcessor│  │ ProfileStore      │
+│ JobManager (scheduler)      │  │ AssemblyTextProcessor│  │ Workspace (JSON)  │
+└──────────────┬──────────────┘  └──────────────────────┘  └───────────────────┘
+┌──────────────▼──────────────┐
+│ IExecutionBackend           │   DockerExecutionBackend  ·  MockExecutionBackend
+│ ILanguageStrategy × 7       │   CompilerRegistry (+ ToolchainProbe)
+└─────────────────────────────┘
 ```
 
-## Data Flow
+| Module | Responsibility | Page |
+| --- | --- | --- |
+| `JobManager` | bounded queue, per-pane replacement, cancellation, shutdown, stale-result filtering | [Job Manager](job-manager.md) |
+| `DockerExecutionBackend` | one container per job, limits, cleanup, artifacts | [Docker Backend](docker-backend.md) |
+| `DockerCompilerManager` | async image listing/pull/delete, probes, ownership | [Compiler Registry](compiler-registry.md) |
+| `CompilerRegistry` | metadata, verification state | same |
+| strategies | exact compiler commands, output parsing | [Language Strategies](language-strategies.md) |
+| `AssemblyParser` | structure and CFG | [Assembly Parser](assembly-parser.md) |
+| diff engine | minimal diffs, patches | [Diff Engine](diff-engine.md) |
+| `Workspace`, `ProjectController`, `ProfileStore` | projects and profiles | [Workspaces](workspaces.md) |
+| `Theme` | tokens, roles | [Theme System](theme-system.md) |
 
-1. **User Edit**:
-   - As the user types in `CodeEditor`, the `m_inputRevision` counter increments.
-   - The debounce timer (default 300ms, configurable via `AppSettings`) delays compilation until typing pauses.
-2. **Request Dispatch**:
-   - `MainWindow::compileAllPanes()` constructs a `CompilationRequest` for each open pane with the pane ID, input revision, source code, compiler image, language, syntax flavor, and user flags.
-3. **Job Scheduling (`JobManager`)**:
-   - `JobManager::submitJob()` registers the request with a unique `jobId`.
-   - Any prior jobs running for the same `paneId` are immediately marked cancelled and their backend processes interrupted.
-   - The job waits in the scheduler queue (at most one waiting job per pane, bounded total) and is only handed to the thread pool while fewer than `maxParallelJobs()` jobs are in flight. See [Job Manager](job-manager.md).
-4. **Execution (`DockerExecutionBackend`)**:
-   - The strategy matching the language and compiler formats the exact compiler invocation arguments.
-   - Host temporary input and output directories are prepared.
-   - The container is executed using strict resource and isolation flags (see [Docker Backend](docker-backend.md)); outputs are read back under hard size limits.
-5. **Result Handling**:
-   - When a job completes, `JobManager::handleTaskFinished()` checks if the job's revision matches the latest revision for that pane.
-   - If the job was superseded by newer typing, its result is safely discarded.
-   - Otherwise, the `CompilationResult` is dispatched to `MainWindow`.
-6. **Presentation**:
-   - `presentResult()` decides the status badge and notice (compiler vs. Docker vs. internal error, truncation, cleanup warnings).
-   - The pane lists the result's typed artifacts. Assembly goes through `AssemblyTextProcessor` (display filters, demangling, line mappings); other artifact types are shown as-is with their own highlighter; diagnostics are a structured list.
-   - The raw assembly is also parsed once by `AssemblyParser` (worker thread) for the Analysis panel. See [Assembly Parser](assembly-parser.md).
+## Lifecycle of one compilation (detailed)
 
-## Modules
+1. **Edit.** `CodeEditor::textChanged` → `MainWindow::onInputTextChanged`: `++m_inputRevision`, restart the
+   debounce timer (default 300 ms).
+2. **Request.** Timer or **F5** → `compileAllPanes()`. For each pane: build a `CompilationRequest` (pane id,
+   revision, source, image, language, syntax, flags, timeout 30 s, target architecture from the verified probe or
+   the daemon, extra project files + main file path). The pane shows *Compiling…* and a Cancel button.
+3. **Schedule.** `DockerCompilerManager::submitRequest` → `JobManager::submitJob`: assign a job id, supersede the
+   pane's older jobs (cancel running ones, replace the waiting one in place), enqueue, fill free slots.
+4. **Execute.** A worker runs `DockerExecutionBackend::execute`:
+   1. register the job and container name (`octos_<pid>_<job>`);
+   2. validate limits (source size), pick the strategy, create two temp dirs (input `0700`, output `0750`);
+   3. write the source and the **validated** extra files into the input dir;
+   4. `docker run --rm --pull=never …` with the hardening flags, `QProcess` owned by the worker;
+   5. poll every ≤ 100 ms: cancel flag, timeout, output into bounded buffers (flood → kill);
+   6. on any end: kill the client, **remove the container**, record failures as leaked;
+   7. read the output file with a hard size bound (regular file inside the sandbox only);
+   8. `strategy->processOutput(...)`, then **re-apply** everything measured here (truncation flags, image,
+      command, warnings, duration), classify the failure origin;
+   9. build typed artifacts (assembly/bytecode, raw output, diagnostics, metadata) with ids, provenance, checksum.
+5. **Hand-off.** The worker appends the result to the manager's inbox and pokes the GUI thread.
+6. **Accept or drop.** `handleTaskFinished` frees the slot, starts the next job, and emits `jobFinished` only if
+   the job is the pane's newest and its revision is not superseded.
+7. **Present.** `MainWindow::onCompilationResultReceived` (guards again), `presentResult()`, version/arch/digest
+   from the registry if verified, `pane->setResult`, `showSelectedArtifact`, analysis panel, editor markers.
 
-| Library / area | Contents |
-| --- | --- |
-| `octos_core` | strategies, `JobManager`, Docker backend and manager, `CompilerRegistry` + probe, `AssemblyParser`, diff engine, `Workspace`, `ProfileStore`, `ProjectController` |
-| `octos_ui` | `MainWindow` (+ `MainWindowProject.cpp`), `CompilerOutputPane`, `AnalysisPanel`, `DiffDialog`, `ProjectExplorerDock`, `CodeEditor`, `Theme` (design tokens), highlighters |
-| `OCTOS` | `main.cpp` only |
+## Data ownership
 
-The application and all GUI tests link the same `octos_ui` library.
+| Data | Owner | Lifetime |
+| --- | --- | --- |
+| `CompilationRequest` | copied into the queue record and the worker | until the job ends |
+| `CompilationResult` | created by the worker, moved through the inbox, copied into the pane | until the next result |
+| temp directories | the worker (`QTemporaryDir`, RAII) | until `execute()` returns |
+| container | the worker (cleanup before return); registry entry removed after cleanup | job duration |
+| `AssemblyModule` | `shared_ptr` held by the analysis panel | until the next analysis |
+| `Workspace` | `ProjectController` (working + saved copy) | while the project is open |
+| settings | `AppSettings` singleton | process |
 
-## Adding a New Compiler or Language
+## Errors and attribution
 
-To add support for a new language:
-1. Create a strategy class inheriting from `ILanguageStrategy` (e.g. `GoStrategy`).
-2. Implement:
-   - `buildCompilerArgs()`: construct non-shell argument lists for the compiler.
-   - `sourceFileName()` and `outputFileName()`.
-   - `supportsSyntaxFlavor()`: return whether Intel/AT&T is supported.
-   - `sanitizeUserFlags()`: filter out hazardous or invalid flags.
-   - `processOutput()`: parse output artifacts and diagnostics.
-3. Register the strategy in `LanguageStrategyRegistry`.
-4. Add the language enum to `CompilerEnums.h` if needed.
-5. Add unit tests in `tests/unit/test_compiler_strategies.cpp`.
+Every failure has an origin (`Compiler`, `Docker`, `Limits`, `Internal`) so the UI can say whose problem it is
+([Error Reference](../reference/errors.md)). Warnings (truncation, failed cleanup) travel in
+`CompilationResult::warnings` and are shown even for successful results.
+
+## Cross-cutting rules
+
+See the *ground rules* in the [Development Guide](index.md#ground-rules-used-throughout-the-code).
+
+## Adding a language
+
+See [Extending OCTOS](extending.md).

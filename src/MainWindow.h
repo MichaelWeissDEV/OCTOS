@@ -77,6 +77,7 @@ private slots:
     void onRefilterOutput();
     void onDocumentModificationChanged(bool modified);
     void onCompareDiff();
+    void onCompileNow();
 
     // Project mode
     void onNewProject();
@@ -149,6 +150,7 @@ private:
     AnalysisPanel* m_analysisPanel{nullptr};
     QMenu* m_applyProfileMenu{nullptr};
     QVector<QAction*> m_projectOnlyActions;
+    QAction* m_compileNowAction{nullptr};
     QWidget* m_sourceEditorContainer{nullptr};
     QSplitter* m_splitter{nullptr};
     QSplitter* m_outputSplitter{nullptr};

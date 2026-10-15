@@ -16,8 +16,8 @@ This document outlines the planned future work for OCTOS.
 
 ### Version 0.5.0 (Structured Artifacts, Assembly AST & Multi-File Workspaces)
 - [x] Core models (`WorkspaceModel`, `AssemblyParser`, `CompilationArtifact`) implemented in `octos_core`
-- [ ] Multi-file workspace UI (Project Tree, Header/Source tab management, CMake/Makefile generation)
-- [ ] Control flow graph (CFG) visualizer for assembly basic blocks
+- [x] Multi-file workspace UI (project explorer, editor tabs, per-file dirty state, profiles). Open: target selection UI, CMake/Makefile generation
+- [x] CFG data (functions, blocks, edges) and analysis panel for x86-64 and AArch64. Open: graphical CFG visualizer
 - [ ] LLVM IR extraction and viewer alongside assembly output
 - [ ] Complete integration and verification of Ada GNAT and C# Mono container pipelines
 

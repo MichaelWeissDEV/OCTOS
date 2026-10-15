@@ -205,6 +205,10 @@ void MainWindow::setupUi() {
     }
 
     toolsMenu->addSeparator();
+    m_compileNowAction = toolsMenu->addAction("Compile &Now");
+    m_compileNowAction->setShortcuts({QKeySequence(Qt::Key_F5), QKeySequence(Qt::CTRL | Qt::Key_Return)});
+    m_compileNowAction->setToolTip("Compile with the current settings (F5), also when auto-compile is off");
+    connect(m_compileNowAction, &QAction::triggered, this, &MainWindow::onCompileNow);
     QAction* autoCompileAction = toolsMenu->addAction("Auto-Compile on change");
     autoCompileAction->setCheckable(true);
     autoCompileAction->setChecked(AppSettings::instance().autoCompile());
@@ -238,6 +242,12 @@ void MainWindow::setupUi() {
     Theme::setRole(m_highlightToggle, "subtle");
     connect(m_highlightToggle, &QPushButton::clicked, this, &MainWindow::onToggleHighlightMode);
     sourceToolbarLayout->addWidget(m_highlightToggle);
+
+    auto* compileButton = new QPushButton("Compile (F5)");
+    compileButton->setToolTip("Compile now, also when auto-compile is turned off");
+    Theme::setRole(compileButton, "success");
+    connect(compileButton, &QPushButton::clicked, this, &MainWindow::onCompileNow);
+    sourceToolbarLayout->addWidget(compileButton);
 
     m_addPaneButton = new QPushButton("+ Compare");
     Theme::setRole(m_addPaneButton, "accent");
@@ -457,6 +467,11 @@ void MainWindow::onDocumentModificationChanged(bool /*modified*/) {
 }
 
 void MainWindow::doCompile() { compileAllPanes(); }
+
+void MainWindow::onCompileNow() {
+    m_debounceTimer->stop();   // an explicit request replaces a pending debounced one
+    compileAllPanes();
+}
 
 void MainWindow::compileAllPanes() {
     QString source = m_inputEditor->toPlainText();

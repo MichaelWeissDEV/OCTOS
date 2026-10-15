@@ -26,12 +26,11 @@ Thank you for your interest in contributing to OCTOS!  I am excited to work with
 sudo apt-get install cmake qt6-base-dev docker.io
 
 # Build the project
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Debug ..
-make -j4
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
 
-# Tests
-# Automated tests are not yet available. See the roadmap for the planned test infrastructure.
+# Tests (Qt Test, headless; see docs/development/testing.md)
+ctest --output-on-failure
 ```
 
 ## Code Style
@@ -92,3 +91,13 @@ When reporting a bug:
 All contributors will be acknowledged in the project.
 
 Thank you for making OCTOS better!
+
+
+## Before opening a pull request
+
+* Run `ctest` in **Debug and Release**; read the `Totals:` lines — skipped tests are not evidence.
+* Concurrency changes: run the affected tests many times under ThreadSanitizer.
+* Parsing/protocol changes: extend `tests/fuzz/fuzz_bodies.h`.
+* Update the matching page under `docs/` (build it with `mkdocs build --strict`) and add an `Unreleased` entry
+  to `CHANGELOG.md`. Do not bump the version or create tags.
+* See [docs/development/extending.md](docs/development/extending.md) for step-by-step recipes.

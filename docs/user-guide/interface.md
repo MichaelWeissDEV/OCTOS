@@ -1,92 +1,116 @@
-# User Interface
+# Interface
 
-The OCTOS application window is divided into several main areas:
+## Window overview
 
-## Main Window Layout
+```
+┌ File  Filters  Tools  View  Project  Profiles ─────────────────────────────────────────────┐
+│ ┌─ Project ─┐ ┌ Source Code ────────[Highlight][+ Compare][Diff View][Close Others]┐ ┌ pane ┐ │
+│ │ tree      │ │ ┌ tabs: main.cpp ● │ util.h ┐                                      │ │      │ │
+│ │ (project  │ │ │ editor with line numbers, │                                      │ │      │ │
+│ │  mode)    │ │ │ error markers, find bar   │                                      │ │      │ │
+│ └───────────┘ │ └───────────────────────────┘                                      │ └──────┘ │
+│               └────────────────────────────────────────────────────────────────────┘          │
+│ ┌ Assembly Analysis (dock, bottom) ───────────────────────────────────────────────────────┐   │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-### Source Code Editor (Left Pane)
+All areas are separated by splitters and the docks can be moved, floated, tabbed or closed.
+The layout is stored when you quit ([Themes & Layout](themes-and-layout.md)).
 
-The left side of the window contains the source code editor where you write the code to be compiled.
+## Source editor
 
-**Features:**
-- **Syntax Highlighting**: C++ syntax highlighting is applied to the source code
-- **Line Numbers**: Line numbers are displayed in the left margin
-- **Auto-bracketing**: When you type an opening bracket `(`, `[`, `{`, `"`, or `'`, the corresponding closing bracket is automatically inserted
-- **Code Folding**: Support for folding code blocks (implementation dependent on Qt version)
+| Feature | Behaviour |
+| --- | --- |
+| Line numbers | left gutter, width adapts to the line count |
+| Current line | highlighted (theme colour) in editable editors |
+| Syntax highlighting | C/C++-style for C, C++, Java, C#, Ada; Rust and Python have their own highlighters. Colours follow the theme. |
+| Auto-pairing | `(`, `[`, `{`, `"`, `'` insert the closing character. Quotes after a letter or backslash are not paired (apostrophes in comments). |
+| Indentation | **Tab** inserts spaces up to the next 4-column stop; **Shift+Tab** removes one level; with a selection both act on all selected lines. **Enter** keeps the indentation of the current line and adds one level after `{` or `:`. |
+| Error markers | a dot in the gutter and a wavy underline at the position of each compiler diagnostic; hover the gutter dot for the message |
+| Find / replace | see below |
+| Drag & drop | drop a file onto the window to load it (asks to close an open project first) |
 
-### Compiler Output Panes (Right Side)
+### Find and replace
 
-The right side of the window contains one or more compiler output panes. Each pane displays the assembly or bytecode output from compiling the source code with a specific compiler and set of flags.
+Open the bar with the platform's standard **Find** (Ctrl+F) and **Replace** (Ctrl+H on most platforms)
+shortcuts. **Enter** / **Shift+Enter** (or ▼ ▲) jump to the next / previous match and wrap around; **F3**
+and **Shift+F3** continue without the bar having focus. The bar shows the number of matches
+(*Match case* toggles case sensitivity). **Replace** replaces the current match, **Replace all** all
+matches in one undo step. Read-only editors (the compiler panes) can be searched but never modified.
+**Esc** closes the bar.
 
-**Pane Controls:**
-- **Language Selector**: Choose the programming language (C++, C, Rust, Java, C#, Python, Ada)
-- **Syntax Selector**: Choose between Intel or AT&T assembly syntax (where applicable)
-- **Compiler Selector**: Choose which Docker compiler image to use
-- **Flags Input**: Enter compiler flags (e.g., `-O2`, `-march=native`)
-- **Close Button**: Remove this pane
+## Compiler panes
 
-### Toolbar and Menu
+Every pane is one independent *compilation configuration*.
 
-**Main Toolbar:**
-- **Highlight Toggle**: Cycle through highlighting modes (Off, All, Selection)
-- **+ Compare Button**: Add a new compiler output pane for side-by-side comparison
-- **Close Others Button**: Close all panes except the current one
+| Control | Meaning |
+| --- | --- |
+| Title | `language \| image \| syntax \| flags`, plus a status badge |
+| **Language** | C++, C, Rust, Java, Python, C#, Ada. Changing it refreshes the compiler list. |
+| **Syntax** | Intel / AT&T for x86 targets; disabled for languages without the choice |
+| **Compiler** | installed Docker images compatible with the language |
+| **Flags** | free-form compiler flags, e.g. `-O3 -march=native` (see [Flags](#flags)) |
+| **Artifact** | appears when the result has more than one view ([Artifacts](artifacts.md)) |
+| **Save…** | saves the shown artifact to a file |
+| **Cancel** | visible while a job is queued or running |
+| Info line | compiler image (and version if verified), runtime, output size; tooltip = exact command |
+| Notice | warnings such as truncated output or a container that could not be removed |
+| ✕ | closes the pane and cancels its jobs |
 
-**File Menu:**
-- **New**: Clear the current source code
-- **Open**: Load source code from a file
-- **Save**: Save the current source code
-- **Recent Files**: Access recently opened files
-- **Clear Recent Files**: Remove the recent files history
+### Status badges
 
-**Filters Menu:**
-Toggle various assembly output filters:
-- **Show Segment Directives**: Display `.section`, `.text`, `.data` etc.
-- **Show Data Directives**: Display `.byte`, `.word`, `.long` etc.
-- **Show CFI Directives**: Display Call Frame Information directives
-- **Show Metadata Labels**: Display compiler-generated labels
-- **Keep Unused Labels**: Keep labels that aren't referenced
-- **Hide Empty Labels**: Hide labels with no instructions
-- **Show Debug Info (.loc)**: Display debug location information
-- **Show Comments**: Display assembly comments
-- **Demangle Identifiers**: Convert mangled C++ names to readable form
+| Badge | Meaning |
+| --- | --- |
+| `Compiling...` | job queued/running |
+| `Success` | compiled; nothing was cut off |
+| `Incomplete` | compiled, but output was truncated — see the notice |
+| `Compiler error` | the toolchain ran and reported errors (see Diagnostics) |
+| `Docker error` | daemon/image problem: not running, image missing, container command not found |
+| `Limit exceeded` | timeout, output flood, size limit |
+| `OCTOS internal error` | OCTOS could not set the job up (temp directories, no strategy …) |
+| `Timeout` | exceeded the time limit (default 30 s) |
+| `Cancelled` | you or a newer edit stopped it |
 
-**Tools Menu:**
-- **Docker Compiler Manager**: Open the compiler image management dialog
-- **Insert Snippet**: Insert code snippets from the snippet library
-- **Theme**: Change the application color theme
+### Flags
 
-## Source Editor Keyboard Shortcuts
+Flags are split like a shell would (quotes allowed) but are **never** executed by a shell. Output-related
+flags (`-o`, `-c`, `--emit` …), shell metacharacters (`; | & $ ` > < ( ) { }`) and flags that do not make
+sense for the language (`-masm=` for Rust, …) are dropped. See
+[Language Strategies](../development/language-strategies.md).
 
-- **Ctrl+N**: New file
-- **Ctrl+O**: Open file
-- **Ctrl+S**: Save file
-- **Up/Down Arrows**: Navigate lines
-- **Tab**: Insert tab character (configurable width)
-- **Backspace/Delete**: Delete characters
+## Menus
 
-## Code Highlighting
+### File
+`New` (Ctrl+N), `Open…` (Ctrl+O), `Recent Files`, `Save` (Ctrl+S), `Save As…`, `Exit`. While a *project* is
+open, these act on the project: Save saves the current file into the project, Save As saves the project under
+a new name, and New/Open ask to close the project first.
 
-The source editor provides syntax highlighting for C++ code, including:
-- Keywords (if, else, for, while, return, etc.)
-- Types (int, float, double, void, etc.)
-- Strings and character literals
-- Comments (single-line and multi-line)
-- Preprocessor directives
+### Filters
+Assembly display filters, see [Filters](filters.md).
 
-## Theming
+### Tools
+`Docker Compiler Manager…`, `Insert Snippet`, `Theme`, `Auto-Compile on change`.
 
-OCTOS includes multiple color themes:
-- **Dark Theme** (default): Dark background with light text
+### View
+Toggle the *Project* and *Assembly Analysis* docks; **Reset Layout**.
 
-Themes can be changed from the Tools > Theme menu.
+### Project
+`New Project…`, `Open Project…`, `Save Project` (Ctrl+Alt+S), `Save Project As…`, `Add File…`,
+`Close Project` — see [Projects](projects.md).
 
-## Status Indicators
+### Profiles
+`Manage Profiles…`, `Save Pane as Profile…`, `Apply Profile to Pane`, `Compare Two Profiles…` — see
+[Profiles](profiles.md).
 
-- **Compiler Output**: Each pane displays the compilation result or error messages
-- **Compilation Status**: Pane shows "Compiling..." during compilation
-- **Error Display**: Compilation errors are shown in the pane with error formatting
+## Source toolbar
 
-## Drag and Drop
+| Button | Action |
+| --- | --- |
+| **Highlight: Off/All/Selection** | cycles the [highlighting mode](assembly-view.md#highlighting-modes) |
+| **+ Compare** | adds a compiler pane |
+| **Diff View** | opens the [diff viewer](diff-viewer.md) (needs ≥ 2 panes) |
+| **Close Others** | closes all panes except the first |
 
-Source code files can be dragged and dropped onto the OCTOS window to load them into the editor.
+## Keyboard shortcuts
+
+See [Keyboard Shortcuts](../reference/keyboard-shortcuts.md).

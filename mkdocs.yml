@@ -33,26 +33,45 @@ nav:
   - User Guide:
     - Overview: user-guide/index.md
     - Interface: user-guide/interface.md
+    - Compiler Manager: user-guide/compiler-manager.md
     - Comparing Compilers: user-guide/compiler-comparison.md
+    - Profiles: user-guide/profiles.md
     - Assembly View: user-guide/assembly-view.md
     - Filters: user-guide/filters.md
-    - Compiler Manager: user-guide/compiler-manager.md
-    - Projects, Profiles & Analysis: user-guide/projects-and-analysis.md
+    - Artifacts: user-guide/artifacts.md
+    - Diff Viewer: user-guide/diff-viewer.md
+    - Assembly Analysis: user-guide/analysis.md
+    - Projects: user-guide/projects.md
+    - Themes & Layout: user-guide/themes-and-layout.md
   - Languages & Compilers:
     - Compiler Support: compilers/index.md
   - Development:
     - Overview: development/index.md
     - Architecture: development/architecture.md
-    - Language Strategies: development/language-strategies.md
+    - Threading Model: development/threading.md
+    - Building & Running: development/building.md
     - Job Manager: development/job-manager.md
     - Docker Backend: development/docker-backend.md
     - Compiler Registry: development/compiler-registry.md
+    - Language Strategies: development/language-strategies.md
     - Assembly Parser: development/assembly-parser.md
     - Diff Engine: development/diff-engine.md
     - Workspaces & Artifacts: development/workspaces.md
+    - UI Architecture: development/ui-architecture.md
+    - Theme System: development/theme-system.md
     - Testing & Quality: development/testing.md
+    - Extending OCTOS: development/extending.md
+    - Design Decisions: development/design-decisions.md
+    - Continuous Integration: development/ci.md
   - Reference:
     - Keyboard Shortcuts: reference/keyboard-shortcuts.md
+    - Settings: reference/settings.md
+    - Environment Variables: reference/environment.md
+    - Project File Format: reference/project-file-format.md
+    - Data Model: reference/data-model.md
+    - Error Reference: reference/errors.md
     - Project Structure: reference/project-structure.md
+    - Glossary: reference/glossary.md
   - Troubleshooting: troubleshooting.md
+  - FAQ: faq.md
   - Limitations: limitations.md
