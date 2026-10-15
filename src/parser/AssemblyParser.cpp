@@ -85,8 +85,8 @@ QStringList splitArgs(const QString& s) {
             continue;
         }
         if (c == '"') { inStr = true; cur += c; continue; }
-        if (c == '(' || c == '[') ++depth;
-        else if (c == ')' || c == ']') depth = qMax(0, depth - 1);
+        if (c == '(' || c == '[' || c == '{') ++depth;
+        else if (c == ')' || c == ']' || c == '}') depth = qMax(0, depth - 1);
         if (c == ',' && depth == 0) { out << cur.trimmed(); cur.clear(); continue; }
         cur += c;
     }
@@ -113,6 +113,51 @@ QStringList splitWhitespaceQuoted(const QString& s) {
     }
     if (!cur.isEmpty()) out << cur;
     return out;
+}
+
+// AArch64 comments: `//`, `/* */` on one line, Apple's `;`, and `#` only as the first character of a line
+// (elsewhere `#` introduces an immediate).
+QString stripArmComment(const QString& line) {
+    bool inStr = false;
+    int firstNonSpace = -1;
+    QString out;
+    for (int i = 0; i < line.size(); ++i) {
+        const QChar c = line[i];
+        if (firstNonSpace < 0 && !c.isSpace()) firstNonSpace = i;
+        if (inStr) {
+            out += c;
+            if (c == '\\' && i + 1 < line.size()) out += line[++i];
+            else if (c == '"') inStr = false;
+            continue;
+        }
+        if (c == '"') { inStr = true; out += c; continue; }
+        if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') break;
+        if (c == '/' && i + 1 < line.size() && line[i + 1] == '*') {
+            const int end = line.indexOf("*/", i + 2);
+            if (end < 0) break;
+            i = end + 1;
+            continue;
+        }
+        if (c == ';') break;
+        if (c == '#' && i == firstNonSpace) break;
+        out += c;
+    }
+    return out;
+}
+
+const QRegularExpression& armRegisterRegex() {
+    static const QRegularExpression re(
+        R"(^(?:[xw](?:[0-9]|[12][0-9]|30)|sp|wsp|xzr|wzr|lr|fp|[vqdshb](?:[0-9]|[12][0-9]|3[01])(?:\.[0-9]*[bhsdq])?(?:\[\d+\])?|z(?:[0-9]|[12][0-9]|3[01])(?:\.[bhsdq])?|p(?:[0-9]|1[0-5])(?:/[mz]|\.[bhsdq])?)$)",
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+// Words that appear as bare operands but are not symbols.
+bool isArmModifierWord(const QString& w) {
+    static const QSet<QString> words = {"eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv",
+                                        "lsl","lsr","asr","ror","msl","uxtb","uxth","uxtw","uxtx","sxtb","sxth","sxtw","sxtx",
+                                        "mul","vl","pow2","all"};
+    return words.contains(w.toLower());
 }
 
 struct Item {
@@ -459,13 +504,116 @@ void buildControlFlow(Function& fn, const QVector<Item>& items) {
 
 } // namespace
 
-AssemblyModule AssemblyParser::parseX86_64(const QString& assemblyText, AsmSyntax syntaxHint,
-                                           const ParseLimits& limits) {
+
+Operand AssemblyParser::parseOperandARM64(const QString& rawOperand, bool branchContext) {
+    Operand op;
+    op.rawText = rawOperand.trimmed();
+    op.kind = OperandKind::Unknown;
+    const QString t = op.rawText;
+    auto done = [&]() { finalizeOperand(op); return op; };
+    if (t.isEmpty()) return done();
+
+    static const QRegularExpression relocRe(R"(^:([a-z0-9_]+):\s*([A-Za-z_.$][A-Za-z0-9_.$]*))");
+    static const QRegularExpression appleRe(R"(^([A-Za-z_.$][A-Za-z0-9_.$]*)@([A-Za-z]+)$)");
+
+    if (armRegisterRegex().match(t).hasMatch()) {
+        op.kind = OperandKind::Register;
+        op.registerName = t.toLower();
+        return done();
+    }
+    if (t.startsWith('[')) {                     // [x0, #8]  [x0], [x0, x1, lsl #3]  [x0, #8]!
+        op.kind = OperandKind::Memory;
+        auto m = relocRe.match(t.mid(t.indexOf(',') >= 0 ? t.indexOf(',') + 1 : 1).trimmed());
+        if (m.hasMatch()) { op.relocation = m.captured(1).toUpper(); op.symbol = m.captured(2); }
+        return done();
+    }
+    if (t.startsWith('#')) {                     // immediates, optionally with a symbol (#:lo12:sym is rare)
+        op.kind = OperandKind::Immediate;
+        const QString rest = t.mid(1).trimmed();
+        auto m = relocRe.match(rest);
+        if (m.hasMatch()) { op.relocation = m.captured(1).toUpper(); op.symbol = m.captured(2); }
+        return done();
+    }
+    auto rm = relocRe.match(t);                  // :lo12:sym  :got:sym  :got_lo12:sym
+    if (rm.hasMatch()) {
+        op.kind = OperandKind::Relocation;
+        op.relocation = rm.captured(1).toUpper();
+        op.symbol = rm.captured(2);
+        return done();
+    }
+    auto am = appleRe.match(t);                  // sym@PAGE  sym@PAGEOFF
+    if (am.hasMatch()) {
+        op.kind = OperandKind::Relocation;
+        op.symbol = am.captured(1);
+        op.relocation = am.captured(2).toUpper();
+        return done();
+    }
+    static const QRegularExpression numRe(R"(^[-+]?(?:0[xX][0-9a-fA-F]+|[0-9]+)$)");
+    if (numRe.match(t).hasMatch()) {             // GAS accepts immediates without '#'
+        op.kind = OperandKind::Immediate;
+        return done();
+    }
+    static const QRegularExpression symRe(R"(^[A-Za-z_.$][A-Za-z0-9_.$]*(?:[+-](?:0[xX][0-9a-fA-F]+|[0-9]+))?$)");
+    if (symRe.match(t).hasMatch()) {
+        const QString base = t.section(QRegularExpression("[+-]"), 0, 0);
+        if (isArmModifierWord(base)) return done();    // condition code / shift: not a symbol, not guessed
+        op.kind = OperandKind::Symbol;
+        op.symbol = base;
+        (void)branchContext;
+        return done();
+    }
+    return done();
+}
+
+InstructionKind AssemblyParser::classifyMnemonicARM64(const QString& mnemonic, const QVector<Operand>& operands) {
+    const QString m = mnemonic.toLower();
+    static const QSet<QString> rets = {"ret", "retaa", "retab", "eret", "eretaa", "eretab", "drps"};
+    if (rets.contains(m)) return InstructionKind::Return;
+    if (m == "brk" || m == "udf" || m == "hlt") return InstructionKind::Trap;
+    if (m == "b") return operands.isEmpty() ? InstructionKind::Unknown : InstructionKind::UnconditionalBranch;
+    if (m.startsWith("b.") || m.startsWith("bc.")) return operands.isEmpty() ? InstructionKind::Unknown : InstructionKind::ConditionalBranch;
+    if (m == "cbz" || m == "cbnz" || m == "tbz" || m == "tbnz") return operands.size() < 2 ? InstructionKind::Unknown : InstructionKind::ConditionalBranch;
+    if (m == "br" || m == "braa" || m == "brab" || m == "braaz" || m == "brabz") return InstructionKind::IndirectBranch;
+    if (m == "bl") return operands.isEmpty() ? InstructionKind::Unknown : InstructionKind::Call;
+    if (m == "blr" || m == "blraa" || m == "blrab" || m == "blraaz" || m == "blrabz") return InstructionKind::IndirectCall;
+    return InstructionKind::Normal;
+}
+
+TargetArchitecture AssemblyParser::detectArchitecture(const QString& text) {
+    const QString head = text.left(16384);
+    static const QRegularExpression armDir(R"(^\s*\.(arch\s+armv8|cpu\s+(generic|cortex)|type\s+[^,\n]+,\s*%function))", QRegularExpression::MultilineOption);
+    static const QRegularExpression armInsn(R"(^\s*(stp|ldp|adrp|cbz|cbnz|tbz|tbnz|b\.[a-z]{2}|bl|ret)\b[^\n]*)", QRegularExpression::MultilineOption);
+    static const QRegularExpression armReg(R"(\b[xw](?:[0-9]|[12][0-9]|30)\b)");
+    static const QRegularExpression x86(R"(%[re]?(ax|bx|cx|dx|si|di|sp|bp)\b|\.intel_syntax|\b(r|e)?(ax|bx|cx|dx|rsp|rbp)\b\s*,)");
+    const bool arm = armDir.match(head).hasMatch() || (armInsn.match(head).hasMatch() && armReg.match(head).hasMatch());
+    const bool isX86 = x86.match(head).hasMatch();
+    if (arm && !isX86) return TargetArchitecture::ARM64;
+    if (isX86 && !arm) return TargetArchitecture::X86_64;
+    return TargetArchitecture::Unknown;
+}
+
+AssemblyModule AssemblyParser::parse(const QString& text, TargetArchitecture arch, const ParseLimits& limits) {
+    if (arch == TargetArchitecture::Unknown) arch = detectArchitecture(text);
+    if (arch == TargetArchitecture::ARM64) return parseARM64(text, limits);
+    return parseX86_64(text, AsmSyntax::Auto, limits);
+}
+
+AssemblyModule AssemblyParser::parseARM64(const QString& text, const ParseLimits& limits) {
+    return parseImpl(text, TargetArchitecture::ARM64, AsmSyntax::Auto, limits);
+}
+
+AssemblyModule AssemblyParser::parseX86_64(const QString& text, AsmSyntax syntax, const ParseLimits& limits) {
+    return parseImpl(text, TargetArchitecture::X86_64, syntax, limits);
+}
+
+AssemblyModule AssemblyParser::parseImpl(const QString& assemblyText, TargetArchitecture arch,
+                                         AsmSyntax syntaxHint, const ParseLimits& limits) {
+    const bool isArm = arch == TargetArchitecture::ARM64;
     AssemblyModule module;
-    module.architecture = TargetArchitecture::X86_64;
+    module.architecture = arch;
 
     AsmSyntax syntax = syntaxHint;
-    if (syntax == AsmSyntax::Auto) {
+    if (!isArm && syntax == AsmSyntax::Auto) {
         syntax = assemblyText.contains(".intel_syntax") ? AsmSyntax::Intel : AsmSyntax::ATT;
     }
     module.syntax = syntax;
@@ -545,7 +693,7 @@ AssemblyModule AssemblyParser::parseX86_64(const QString& assemblyText, AsmSynta
             continue;
         }
 
-        QString text = stripX86Comment(rawLine).trimmed();
+        QString text = (isArm ? stripArmComment(rawLine) : stripX86Comment(rawLine)).trimmed();
         if (text.isEmpty()) continue;
 
         // Leading label definitions ("name:" possibly followed by an instruction)
@@ -660,7 +808,7 @@ AssemblyModule AssemblyParser::parseX86_64(const QString& assemblyText, AsmSynta
         for (;;) {
             const QString first = rest.section(wsRegex(), 0, 0);
             const QString after = rest.mid(first.size()).trimmed();
-            if (!after.isEmpty() && prefixes().contains(first.toLower())) {
+            if (!isArm && !after.isEmpty() && prefixes().contains(first.toLower())) {
                 inst.prefix += (inst.prefix.isEmpty() ? "" : " ") + first.toLower();
                 rest = after;
             } else break;
@@ -680,18 +828,23 @@ AssemblyModule AssemblyParser::parseX86_64(const QString& assemblyText, AsmSynta
 
         // Operands. Whether an operand is a branch target depends on the mnemonic.
         const QString mLower = mnemonic.toLower();
-        const bool branchLike = mLower.startsWith('j') || mLower.startsWith("call") || mLower.startsWith("lcall") ||
-                                mLower.startsWith("loop") || mLower.startsWith("ljmp");
+        const bool branchLike = isArm
+            ? (mLower == "b" || mLower == "bl" || mLower.startsWith("b.") || mLower.startsWith("bc.") ||
+               mLower == "cbz" || mLower == "cbnz" || mLower == "tbz" || mLower == "tbnz")
+            : (mLower.startsWith('j') || mLower.startsWith("call") || mLower.startsWith("lcall") ||
+               mLower.startsWith("loop") || mLower.startsWith("ljmp"));
         for (const QString& o : splitOperands(operandText)) {
-            inst.operands.append(parseOperand(o, syntax, branchLike));
+            inst.operands.append(isArm ? parseOperandARM64(o, branchLike) : parseOperand(o, syntax, branchLike));
         }
-        inst.kind = classifyMnemonic(mnemonic, inst.operands, syntax);
+        inst.kind = isArm ? classifyMnemonicARM64(mnemonic, inst.operands) : classifyMnemonic(mnemonic, inst.operands, syntax);
         inst.isBranch = inst.kind == InstructionKind::ConditionalBranch || inst.kind == InstructionKind::UnconditionalBranch ||
                         inst.kind == InstructionKind::IndirectBranch || inst.kind == InstructionKind::Call ||
                         inst.kind == InstructionKind::IndirectCall;
         if ((inst.kind == InstructionKind::ConditionalBranch || inst.kind == InstructionKind::UnconditionalBranch ||
              inst.kind == InstructionKind::Call) && !inst.operands.isEmpty()) {
-            const Operand& o = inst.operands.first();
+            // cbz/cbnz/tbz/tbnz carry the target as their LAST operand; everything else as the first.
+            const bool lastIsTarget = isArm && (mLower == "cbz" || mLower == "cbnz" || mLower == "tbz" || mLower == "tbnz");
+            const Operand& o = lastIsTarget ? inst.operands.last() : inst.operands.first();
             inst.branchTarget = (o.kind == OperandKind::Symbol || o.kind == OperandKind::Relocation || o.kind == OperandKind::Unknown)
                                     ? (o.symbol.isEmpty() ? o.rawText : (o.kind == OperandKind::Symbol ? o.rawText : o.symbol))
                                     : QString();

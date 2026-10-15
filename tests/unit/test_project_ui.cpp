@@ -39,6 +39,7 @@ private slots:
     void testExplorerReflectsProject();
     void testFindReplace();
     void testAnalysisPanelFromRealAssembly();
+    void testAnalysisHandlesArm64();
     void testAnalysisNavigation();
     void testAnalysisDockFedByCompileResult();
     void testLayoutIsPersisted();
@@ -305,6 +306,18 @@ void TestProjectUi::testAnalysisPanelFromRealAssembly() {
     // Removing the pane clears the view
     panel.removePane(1);
     QCOMPARE(funcs->topLevelItemCount(), 0);
+}
+
+void TestProjectUi::testAnalysisHandlesArm64() {
+    AnalysisPanel panel;
+    panel.show();
+    panel.setPaneAssembly(3, "arm", readCorpus("clang_aarch64_O3.s"));
+    QTRY_VERIFY_WITH_TIMEOUT(panel.currentModule() != nullptr, 10000);
+    QCOMPARE(panel.currentModule()->architecture, TargetArchitecture::ARM64);
+    QVERIFY(panel.functionTree()->topLevelItemCount() >= 8);
+    // switching the same pane to x86 output re-detects the architecture
+    panel.setPaneAssembly(3, "x86", readCorpus("clang_x86_64_att_O3.s"));
+    QTRY_VERIFY_WITH_TIMEOUT(panel.currentModule() && panel.currentModule()->architecture == TargetArchitecture::X86_64, 10000);
 }
 
 void TestProjectUi::testAnalysisNavigation() {

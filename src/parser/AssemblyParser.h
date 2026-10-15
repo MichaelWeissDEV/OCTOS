@@ -19,11 +19,26 @@ public:
                                       AsmSyntax syntax = AsmSyntax::Auto,
                                       const ParseLimits& limits = ParseLimits());
 
+    // AArch64 (GNU assembler syntax, as emitted by GCC and Clang for Linux and by Clang for Apple).
+    static AssemblyModule parseARM64(const QString& assemblyText, const ParseLimits& limits = ParseLimits());
+
+    // Dispatches on the architecture; Unknown detects it from the text (x86-64 if ambiguous).
+    static AssemblyModule parse(const QString& assemblyText, TargetArchitecture arch = TargetArchitecture::Unknown,
+                                const ParseLimits& limits = ParseLimits());
+    // Heuristic detection from directives, register names and instruction forms.
+    static TargetArchitecture detectArchitecture(const QString& assemblyText);
+
+    static Operand parseOperandARM64(const QString& rawOperand, bool branchContext = false);
+    static InstructionKind classifyMnemonicARM64(const QString& mnemonic, const QVector<Operand>& operands);
+
     // Exposed for testing and for the analysis UI.
     static Operand parseOperand(const QString& rawOperand, AsmSyntax syntax, bool branchContext = false);
     static InstructionKind classifyMnemonic(const QString& mnemonic, const QVector<Operand>& operands,
                                             AsmSyntax syntax);
     static QStringList splitOperands(const QString& operandText);
+
+private:
+    static AssemblyModule parseImpl(const QString& text, TargetArchitecture arch, AsmSyntax syntaxHint, const ParseLimits& limits);
 };
 
 #endif // ASSEMBLYPARSER_H

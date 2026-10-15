@@ -53,12 +53,12 @@ private slots:
 
 void TestFuzzProperties::testAsmParserProperties() {
     QVector<QByteArray> seeds = {corpus("clang_x86_64_att_O0.s").left(40000), corpus("clang_x86_64_att_O3.s"),
-                                 corpus("clang_x86_64_intel_O3.s"), "", "f:\n\tret\n", "\t.type f,@function\nf:\n1:\n\tjne 1b\n\tjmp *%rax\n"};
+                                 corpus("clang_x86_64_intel_O3.s"), corpus("clang_aarch64_O3.s"), corpus("clang_aarch64_O0.s").left(30000), "", "f:\n\tcbz x0, 1f\n\tb.eq f\n\tbr x1\n1:\n\tret\n", "f:\n\tret\n", "\t.type f,@function\nf:\n1:\n\tjne 1b\n\tjmp *%rax\n"};
     run(fuzz::asmParser, seeds, 600, 1);
 }
 
 void TestFuzzProperties::testOperandParserProperties() {
-    QVector<QByteArray> seeds = {"%rax", "$42", "-4(%rbp)", "foo@PLT", "*%rax", "DWORD PTR [rbp-4]", "OFFSET .LC0", "%fs:40", "", "((((", "$$$", "\xff\xfe"};
+    QVector<QByteArray> seeds = {"%rax", "x0", "[x0, #8]", ":lo12:sym", "#42", "$42", "-4(%rbp)", "foo@PLT", "*%rax", "DWORD PTR [rbp-4]", "OFFSET .LC0", "%fs:40", "", "((((", "$$$", "\xff\xfe"};
     run(fuzz::operandParser, seeds, 4000, 2);
 }
 

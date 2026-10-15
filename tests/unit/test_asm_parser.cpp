@@ -105,6 +105,11 @@ private slots:
     void testSourceMapping();
     void testUnknownDirectivesAndGarbage();
     void testIntelSyntaxCorpus();
+    void testArm64CorpusInvariants_data();
+    void testArm64CorpusInvariants();
+    void testArm64Structure();
+    void testArm64Operands();
+    void testArm64CommentsAndDetection();
     void testMetricsFromModel();
     void testRobustnessRandomInput();
 };
@@ -378,6 +383,143 @@ void TestAsmParser::testIntelSyntaxCorpus() {
     const Function* t = findFn(m, "tail_call");
     QVERIFY(t);
     QCOMPARE(countKind(*t, InstructionKind::Return), 0);
+}
+
+void TestAsmParser::testArm64CorpusInvariants_data() {
+    QTest::addColumn<QString>("file");
+    QTest::newRow("clang aarch64 O0") << "clang_aarch64_O0.s";
+    QTest::newRow("clang aarch64 O3") << "clang_aarch64_O3.s";
+}
+
+void TestAsmParser::testArm64CorpusInvariants() {
+    QFETCH(QString, file);
+    const QString text = readData(file);
+    QVERIFY2(!text.isEmpty(), "corpus file missing");
+    QCOMPARE(AssemblyParser::detectArchitecture(text), TargetArchitecture::ARM64);
+    auto m = AssemblyParser::parse(text);                         // detection picks the ARM64 parser
+    QCOMPARE(m.architecture, TargetArchitecture::ARM64);
+    QVERIFY(!m.truncated);
+    for (const char* name : {"simple_add", "if_else", "loop_sum", "sw", "sw_call", "tail_call", "call_twice", "indirect", "uses_local"})
+        QVERIFY2(findFn(m, name), name);
+    QStringList problems;
+    for (const auto& fn : m.functions) { checkInvariants(fn, &problems); QVERIFY2(fn.declaredAsFunction, qPrintable(fn.name)); }
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.join("\n")));
+    // nothing in a compiler-produced listing may end up unparsed
+    QVERIFY2(m.unparsedLines.isEmpty(), qPrintable(m.unparsedLines.mid(0, 5).join(" | ")));
+}
+
+void TestAsmParser::testArm64Structure() {
+    auto o0 = AssemblyParser::parseARM64(readData("clang_aarch64_O0.s"));
+    auto o3 = AssemblyParser::parseARM64(readData("clang_aarch64_O3.s"));
+    const Function* simple = findFn(o3, "simple_add");
+    QVERIFY(simple);
+    QCOMPARE(simple->basicBlocks.size(), 1);
+    QCOMPARE(countKind(*simple, InstructionKind::Return), 1);
+
+    const Function* ie = findFn(o0, "if_else");
+    QVERIFY(ie);
+    QVERIFY2(countKind(*ie, InstructionKind::ConditionalBranch) >= 2, qPrintable(dump(*ie)));
+    QCOMPARE(countEdges(*ie, EdgeKind::Taken), countKind(*ie, InstructionKind::ConditionalBranch));
+    for (const auto& e : ie->edges) if (e.kind == EdgeKind::Taken) QVERIFY(e.to >= 0);
+
+    const Function* loop = findFn(o0, "loop_sum");
+    QVERIFY(loop);
+    bool back = false;
+    for (const auto& e : loop->edges) if (e.to >= 0 && e.to <= e.from && e.kind != EdgeKind::Fallthrough) back = true;
+    QVERIFY2(back, qPrintable(dump(*loop)));
+
+    // cbz/b.cond chains of a switch: every compare-and-branch has a resolved target
+    const Function* sw = findFn(o3, "sw_call");
+    QVERIFY(sw);
+    int cbz = 0;
+    for (const auto& b : sw->basicBlocks)
+        for (const auto& in : b.instructions)
+            if (in.mnemonic == "cbz" || in.mnemonic == "cbnz") {
+                ++cbz;
+                QVERIFY(!in.branchTarget.isEmpty());              // the target is the LAST operand
+                QVERIFY(in.branchTarget.startsWith(".L"));
+            }
+    QVERIFY(cbz >= 1);
+
+    // tail calls: `b helper` leaves the function, `bl` is a call that does not split the block
+    const Function* tail = findFn(o3, "tail_call");
+    QVERIFY(tail);
+    bool leaves = false;
+    for (const auto& e : tail->edges) if (e.kind == EdgeKind::Unconditional && e.leavesFunction && e.targetName == "helper") leaves = true;
+    QVERIFY2(leaves, qPrintable(dump(*tail)));
+    QCOMPARE(countKind(*tail, InstructionKind::Return), 0);
+    const Function* two = findFn(o3, "call_twice");
+    QVERIFY(two);
+    QVERIFY(countKind(*two, InstructionKind::Call) >= 2);
+    QCOMPARE(two->basicBlocks.size(), 1);
+
+    // computed branches carry no invented target
+    const Function* ind = findFn(o3, "indirect");
+    QVERIFY(ind);
+    QVERIFY2(countKind(*ind, InstructionKind::IndirectBranch) + countKind(*ind, InstructionKind::IndirectCall) >= 1, qPrintable(dump(*ind)));
+    for (const auto& e : ind->edges) if (e.kind == EdgeKind::IndirectUnknown) { QCOMPARE(e.to, -1); QVERIFY(e.targetName.isEmpty()); }
+
+    auto metrics = computeAssemblyMetrics(o3);
+    QVERIFY(metrics.tailCalls >= 1);
+    QVERIFY(metrics.calls >= 2);
+}
+
+void TestAsmParser::testArm64Operands() {
+    auto op = [](const char* t, bool br = false) { return AssemblyParser::parseOperandARM64(t, br); };
+    QCOMPARE(op("x0").kind, OperandKind::Register);
+    QCOMPARE(op("w30").kind, OperandKind::Register);
+    QCOMPARE(op("sp").kind, OperandKind::Register);
+    QCOMPARE(op("xzr").kind, OperandKind::Register);
+    QCOMPARE(op("v3.16b").kind, OperandKind::Register);
+    QCOMPARE(op("q0").kind, OperandKind::Register);
+    QCOMPARE(op("#42").kind, OperandKind::Immediate);
+    QCOMPARE(op("#-8").kind, OperandKind::Immediate);
+    QCOMPARE(op("#0x10").kind, OperandKind::Immediate);
+    QCOMPARE(op("[x0, #8]").kind, OperandKind::Memory);
+    QCOMPARE(op("[sp, #-16]!").kind, OperandKind::Memory);
+    QCOMPARE(op("[x0, x1, lsl #3]").kind, OperandKind::Memory);
+    QCOMPARE(op(":lo12:.LC0").kind, OperandKind::Relocation);
+    QCOMPARE(op(":lo12:.LC0").relocation, QString("LO12"));
+    QCOMPARE(op(":lo12:.LC0").symbol, QString(".LC0"));
+    QCOMPARE(op(":got:helper").symbol, QString("helper"));
+    QCOMPARE(op("sym@PAGE").relocation, QString("PAGE"));
+    QCOMPARE(op(".L3", true).kind, OperandKind::Symbol);
+    QCOMPARE(op("helper", true).kind, OperandKind::Symbol);
+    // condition codes and shifts are not symbols
+    QCOMPARE(op("eq").kind, OperandKind::Unknown);
+    QCOMPARE(op("lsl").kind, OperandKind::Unknown);
+    // x-like prefixes of identifiers are not registers
+    QCOMPARE(op("x_counter").kind, OperandKind::Symbol);
+    QCOMPARE(op("w31").kind, OperandKind::Symbol);                 // there is no w31 register
+    Operand u = op("@@{}");
+    QCOMPARE(u.kind, OperandKind::Unknown);
+    QCOMPARE(u.rawText, QString("@@{}"));
+    // a vector list stays ONE operand
+    QCOMPARE(AssemblyParser::splitOperands("{v0.16b, v1.16b}, [x0]").size(), 2);
+}
+
+void TestAsmParser::testArm64CommentsAndDetection() {
+    const QString text =
+        "\t.type\tf,%function\nf:\n// full-line comment\n\tadd\tx0, x1, #42   // trailing\n\tmov\tw0, #7 ; apple style\n"
+        "# line comment\n\tcbz\tx0, 1f\n\tb\t2f\n1:\n\tnop\n2:\n\tret\n";
+    auto m = AssemblyParser::parseARM64(text);
+    QCOMPARE(m.functions.size(), 1);
+    const auto& fn = m.functions[0];
+    QCOMPARE(fn.totalInstructions(), 6);                             // add, mov, cbz, b, nop, ret
+    const Instruction& add = fn.basicBlocks[0].instructions[0];
+    QCOMPARE(add.operands.size(), 3);
+    QCOMPARE(add.operands[2].rawText, QString("#42"));               // '#42' is NOT cut off as a comment
+    QCOMPARE(add.operands[2].kind, OperandKind::Immediate);
+    QStringList problems; checkInvariants(fn, &problems);
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.join("\n") + dump(fn)));
+    bool taken = false;
+    for (const auto& e : fn.edges) if (e.kind == EdgeKind::Taken && e.to >= 0) taken = true;   // numeric label 1f resolved
+    QVERIFY2(taken, qPrintable(dump(fn)));
+    // detection: x86 listings stay x86, ambiguous text defaults to x86 in parse()
+    QCOMPARE(AssemblyParser::detectArchitecture(readData("clang_x86_64_att_O3.s")), TargetArchitecture::X86_64);
+    QCOMPARE(AssemblyParser::detectArchitecture(readData("clang_x86_64_intel_O3.s")), TargetArchitecture::X86_64);
+    QCOMPARE(AssemblyParser::detectArchitecture("hello\n"), TargetArchitecture::Unknown);
+    QCOMPARE(AssemblyParser::parse("hello\n").architecture, TargetArchitecture::X86_64);
 }
 
 void TestAsmParser::testMetricsFromModel() {

@@ -29,47 +29,56 @@ inline QString text(const uint8_t* data, size_t size) {
     return QString::fromUtf8(reinterpret_cast<const char*>(data), static_cast<qsizetype>(size));
 }
 
-// Any input produces a model whose CFG is internally consistent.
+// Invariants of any model: blocks, edges and operands are consistent.
+inline void checkModel(const AssemblyModule& m) {
+    for (const Function& fn : m.functions) {
+        for (int b = 0; b < fn.basicBlocks.size(); ++b) {
+            const BasicBlock& bb = fn.basicBlocks[b];
+            FUZZ_CHECK(bb.id == b);
+            FUZZ_CHECK(!bb.instructions.isEmpty());
+            for (int i = 0; i + 1 < bb.instructions.size(); ++i) FUZZ_CHECK(!bb.instructions[i].isTerminator());
+            for (const Instruction& in : bb.instructions) {
+                FUZZ_CHECK(in.originalLineNumber >= 1);
+                for (const Operand& op : in.operands) {
+                    FUZZ_CHECK(op.isRegister == (op.kind == OperandKind::Register));
+                    FUZZ_CHECK(op.isMemory == (op.kind == OperandKind::Memory));
+                    FUZZ_CHECK(op.isImmediate == (op.kind == OperandKind::Immediate));
+                }
+            }
+        }
+        for (const BlockEdge& e : fn.edges) {
+            FUZZ_CHECK(e.from >= 0 && e.from < fn.basicBlocks.size());
+            FUZZ_CHECK(e.to < fn.basicBlocks.size());
+            if (e.kind == EdgeKind::IndirectUnknown) FUZZ_CHECK(e.to == -1 && e.targetName.isEmpty());
+            if (e.kind == EdgeKind::Fallthrough) FUZZ_CHECK(e.to == e.from + 1);
+        }
+    }
+    const AssemblyMetrics mt = computeAssemblyMetrics(m);
+    FUZZ_CHECK(mt.functionCount == m.functions.size());
+    FUZZ_CHECK(mt.instructionCount == m.totalInstructions());
+}
+
+// Any input (x86 in both syntaxes, AArch64, auto-detected) produces a consistent model.
 inline void asmParser(const uint8_t* data, size_t size) {
     if (size > (1u << 20)) return;
     const QString t = text(data, size);
-    for (AsmSyntax syn : {AsmSyntax::Auto, AsmSyntax::ATT, AsmSyntax::Intel}) {
-        ParseLimits limits;
-        limits.maxLines = 5000;       // bounded work per input
-        limits.maxLineLength = 4096;
-        const AssemblyModule m = AssemblyParser::parseX86_64(t, syn, limits);
-        for (const Function& fn : m.functions) {
-            for (int b = 0; b < fn.basicBlocks.size(); ++b) {
-                const BasicBlock& bb = fn.basicBlocks[b];
-                FUZZ_CHECK(bb.id == b);
-                FUZZ_CHECK(!bb.instructions.isEmpty());
-                for (int i = 0; i + 1 < bb.instructions.size(); ++i) FUZZ_CHECK(!bb.instructions[i].isTerminator());
-                for (const Instruction& in : bb.instructions) {
-                    FUZZ_CHECK(in.originalLineNumber >= 1);
-                    for (const Operand& op : in.operands) {
-                        // flags are always consistent with the kind and the original text is kept
-                        FUZZ_CHECK(op.isRegister == (op.kind == OperandKind::Register));
-                        FUZZ_CHECK(op.isMemory == (op.kind == OperandKind::Memory));
-                        FUZZ_CHECK(op.isImmediate == (op.kind == OperandKind::Immediate));
-                    }
-                }
-            }
-            for (const BlockEdge& e : fn.edges) {
-                FUZZ_CHECK(e.from >= 0 && e.from < fn.basicBlocks.size());
-                FUZZ_CHECK(e.to < fn.basicBlocks.size());
-                if (e.kind == EdgeKind::IndirectUnknown) FUZZ_CHECK(e.to == -1 && e.targetName.isEmpty());
-                if (e.kind == EdgeKind::Fallthrough) FUZZ_CHECK(e.to == e.from + 1);
-            }
-        }
-        const AssemblyMetrics mt = computeAssemblyMetrics(m);
-        FUZZ_CHECK(mt.functionCount == m.functions.size());
-        FUZZ_CHECK(mt.instructionCount == m.totalInstructions());
-    }
+    ParseLimits limits;
+    limits.maxLines = 5000;       // bounded work per input
+    limits.maxLineLength = 4096;
+    for (AsmSyntax syn : {AsmSyntax::Auto, AsmSyntax::ATT, AsmSyntax::Intel})
+        checkModel(AssemblyParser::parseX86_64(t, syn, limits));
+    checkModel(AssemblyParser::parseARM64(t, limits));
+    checkModel(AssemblyParser::parse(t, TargetArchitecture::Unknown, limits));
 }
 
 inline void operandParser(const uint8_t* data, size_t size) {
     if (size > 4096) return;
     const QString t = text(data, size);
+    for (bool branch : {false, true}) {
+        const Operand a = AssemblyParser::parseOperandARM64(t, branch);
+        FUZZ_CHECK(a.rawText == t.trimmed());
+        if (a.kind == OperandKind::Unknown) FUZZ_CHECK(!a.isRegister && !a.isMemory && !a.isImmediate && !a.isSymbol && !a.isRelocation);
+    }
     for (AsmSyntax syn : {AsmSyntax::ATT, AsmSyntax::Intel})
         for (bool branch : {false, true}) {
             const Operand op = AssemblyParser::parseOperand(t, syn, branch);

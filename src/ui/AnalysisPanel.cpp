@@ -23,7 +23,7 @@ public:
     void run() override {
         OCTOS_TSAN_ACQUIRE(this);
         m_promise.start();
-        auto module = std::make_shared<AssemblyModule>(AssemblyParser::parseX86_64(m_text));
+        auto module = std::make_shared<AssemblyModule>(AssemblyParser::parse(m_text));
         if (!m_promise.isCanceled()) m_promise.addResult(module);
         m_promise.finish();
     }
@@ -203,18 +203,6 @@ void AnalysisPanel::startAnalysis() {
     if (it == m_entries.constEnd()) return;
 
     cancelJob();
-    if (AssemblyDiffProcessor::detectNativeDialect(it->text, false) == AsmDialect::ARM64) {
-        // Say so instead of showing an empty or misleading analysis.
-        m_module.reset();
-        m_functions->clear();
-        m_blocks->clear();
-        m_frequencies->setRowCount(0);
-        m_summary->clear();
-        m_metrics->clear();
-        m_status->setText("This listing is ARM64 assembly. The analysis currently understands x86-64 GNU assembler output only.");
-        Theme::setRole(m_status, "warning");
-        return;
-    }
     m_status->setText("Analyzing…");
     m_status->setProperty("role", "muted");
 
@@ -263,13 +251,13 @@ void AnalysisPanel::showModule(std::shared_ptr<AssemblyModule> module) {
     if (m_functions->topLevelItemCount() > 0) m_functions->setCurrentItem(m_functions->topLevelItem(0));
 
     const AssemblyMetrics mt = computeAssemblyMetrics(*module);
-    m_summary->setText(QString("%1 functions · %2 blocks · %3 instructions").arg(mt.functionCount).arg(mt.basicBlockCount).arg(mt.instructionCount));
+    m_summary->setText(QString("%1 · %2 functions · %3 blocks · %4 instructions").arg(architectureToString(module->architecture)).arg(mt.functionCount).arg(mt.basicBlockCount).arg(mt.instructionCount));
 
     QStringList notes;
     if (module->truncated) notes << "The listing exceeded the parser limits: the analysis is incomplete.";
     if (!module->warnings.isEmpty()) notes << QString("%1 parser note(s): %2").arg(module->warnings.size()).arg(module->warnings.first());
-    if (module->architecture == TargetArchitecture::X86_64 && module->functions.isEmpty())
-        notes << "No functions found. The analysis currently understands x86-64 GNU assembler output only.";
+    if (module->functions.isEmpty())
+        notes << "No functions found. The analysis understands x86-64 and AArch64 GNU assembler output.";
     m_status->setText(notes.join(" "));
     Theme::setRole(m_status, notes.isEmpty() ? "muted" : "warning");
 
