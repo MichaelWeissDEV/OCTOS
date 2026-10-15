@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QTimer>
 #include <QAction>
+#include <QMenu>
 #include <QTemporaryDir>
 #include <QSignalSpy>
 #include "core/AppSettings.h"
@@ -36,6 +37,7 @@ private slots:
     void testOpeningAndSwitchingTabsDoesNotChangeTheProject();
     void testStandaloneActionsNeverOverwriteProjectFiles();
     void testSaveProjectShortcutIsUnambiguous();
+    void testTargetAndProfileMenus();
     void testExplorerReflectsProject();
     void testFindReplace();
     void testAnalysisPanelFromRealAssembly();
@@ -209,6 +211,58 @@ void TestProjectUi::testSaveProjectShortcutIsUnambiguous() {
             QVERIFY(!a->shortcuts().contains(QKeySequence(QKeySequence::SaveAs)));
             QVERIFY(!a->shortcut().isEmpty());
         }
+}
+
+void TestProjectUi::testTargetAndProfileMenus() {
+    MainWindow w;
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    ProjectController* pc = w.projectController();
+    pc->newProject("T");
+    QString err;
+    QVERIFY(pc->addFile("a.cpp", "int a;\n", &err));
+    QVERIFY(pc->addFile("b.cpp", "int b;\n", &err));
+    QVERIFY(pc->ensureTargetForMain("alpha", "a.cpp"));
+    QVERIFY(pc->ensureTargetForMain("beta", "b.cpp"));
+    QVERIFY(pc->setActiveTarget("alpha"));
+    CompilerProfile p; p.id = "fast"; p.name = "Fast"; p.compilerImage = "gcc:13"; p.optimization = "-O3";
+    QVERIFY(pc->addOrUpdateProfile(p));
+    w.openProjectFile("a.cpp");
+
+    QMenu* targets = nullptr; QMenu* profiles = nullptr;
+    for (QMenu* m : w.findChildren<QMenu*>()) {
+        if (m->title().contains("Active") && m->title().contains("Target")) targets = m;
+        if (m->title().contains("Active") && m->title().contains("Profile")) profiles = m;
+    }
+    QVERIFY(targets && profiles);
+    emit targets->aboutToShow();
+    QCOMPARE(targets->actions().size() >= 3, true);                    // alpha, beta, separator + "New Target…"
+    QAction* alpha = nullptr; QAction* beta = nullptr;
+    for (QAction* a : targets->actions()) { if (a->text().startsWith("alpha")) alpha = a; if (a->text().startsWith("beta")) beta = a; }
+    QVERIFY(alpha && beta);
+    QVERIFY(alpha->isChecked());
+    QVERIFY(!beta->isChecked());
+    beta->trigger();                                                   // explicit choice: changes the target and opens its main file
+    QCOMPARE(pc->workspace().configuration().activeTargetName, QString("beta"));
+    QCOMPARE(w.activeEditor()->toPlainText(), QString("int b;\n"));
+    emit targets->aboutToShow();
+    for (QAction* a : targets->actions()) if (a->text().startsWith("beta")) QVERIFY(a->isChecked());
+
+    emit profiles->aboutToShow();
+    QAction* fast = nullptr;
+    for (QAction* a : profiles->actions()) if (a->text() == "Fast") fast = a;
+    QVERIFY(fast);
+    fast->trigger();
+    QCOMPARE(pc->workspace().configuration().activeProfileId, QString("fast"));
+    // the active profile drove the pane's flags
+    bool sawFlags = false;
+    for (CompilerOutputPane* pane : w.outputPanes()) if (pane->getCompilerFlags() == "-O3") sawFlags = true;
+    QVERIFY(sawFlags);
+    // gcc:13 is not installed here: the user is told in the pane (non-modal), flags were still applied
+    bool sawNotice = false;
+    for (CompilerOutputPane* pane : w.outputPanes())
+        for (QLabel* l : pane->findChildren<QLabel*>()) if (l->text().contains("not installed")) sawNotice = true;
+    QVERIFY(sawNotice);
 }
 
 void TestProjectUi::testExplorerReflectsProject() {

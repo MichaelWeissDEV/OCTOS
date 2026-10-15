@@ -96,6 +96,10 @@ private slots:
     void onSavePaneAsProfile();
     void onCompareProfiles();
     void onApplyProfile(const QString& id);
+    void onManageProjectProfiles();
+    void onNewTarget();
+    void onSelectTarget(const QString& name);
+    void onSelectProjectProfile(const QString& id);
 
     void onResetLayout();
 
@@ -137,6 +141,7 @@ private:
     void saveLayout();
     void restoreLayout();
     void rebuildApplyProfileMenu();
+    void rebuildTargetMenus();
     QStringList installedCompilerImages() const;
 
     CodeEditor* m_inputEditor{nullptr};
@@ -149,6 +154,8 @@ private:
     QDockWidget* m_analysisDock{nullptr};
     AnalysisPanel* m_analysisPanel{nullptr};
     QMenu* m_applyProfileMenu{nullptr};
+    QMenu* m_targetMenu{nullptr};
+    QMenu* m_projectProfileMenu{nullptr};
     QVector<QAction*> m_projectOnlyActions;
     QAction* m_compileNowAction{nullptr};
     QWidget* m_sourceEditorContainer{nullptr};

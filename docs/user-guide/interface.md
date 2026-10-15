@@ -96,7 +96,7 @@ Toggle the *Project* and *Assembly Analysis* docks; **Reset Layout**.
 
 ### Project
 `New Project…`, `Open Project…`, `Save Project` (Ctrl+Alt+S), `Save Project As…`, `Add File…`,
-`Close Project` — see [Projects](projects.md).
+`Active Target ▸`, `Active Profile ▸`, `Manage Project Profiles…`, `Close Project` — see [Projects](projects.md).
 
 ### Profiles
 `Manage Profiles…`, `Save Pane as Profile…`, `Apply Profile to Pane`, `Compare Two Profiles…` — see

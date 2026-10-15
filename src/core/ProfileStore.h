@@ -13,6 +13,9 @@ public:
     static ProfileStore load(QStringList* warnings = nullptr);
     bool save(QString* errorMsg = nullptr) const;
 
+    // A store that is not backed by the settings (used to edit a project's profiles with the same dialog).
+    static ProfileStore fromProfiles(const QVector<CompilerProfile>& profiles) { ProfileStore s; s.m_profiles = profiles; return s; }
+
     const QVector<CompilerProfile>& profiles() const { return m_profiles; }
     bool add(const CompilerProfile& profile, QString* errorMsg = nullptr);  // replaces the same id
     bool remove(const QString& id);

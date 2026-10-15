@@ -61,8 +61,19 @@ source in total.
 * written atomically;
 * every path is project-relative and checked again when it is copied into a container.
 
-## Profiles and targets
+## Targets and profiles
 
-A project carries its own profiles (shown with *(project)*) and build targets. The active target is the one
-whose main file is used; there is currently no dialog to choose between several targets — use *Use as main
-file* (see [Limitations](../limitations.md)).
+A **target** names a main file and the files built with it (the main file plus all headers). A project has an
+*active target*; its main file is the one compiled when you press F5.
+
+**Project ▸ Active Target** lists all targets (the active one is checked, with its main file). Choosing one is
+an explicit decision: it becomes active and its main file opens. **New Target from Current File…** creates a
+target whose main file is the file of the current tab. (Switching tabs never changes the target.)
+
+A **project profile** lives inside the project file. **Project ▸ Manage Project Profiles…** opens the same
+editor as for user profiles; changes mark the project as modified. **Project ▸ Active Profile** chooses the
+profile that drives the compiler panes: selecting one applies it to all panes (image, flags, language, syntax).
+If its image is not installed, a *non-modal* notice appears in the pane and the status bar; the other settings
+are still applied. See [Profiles](profiles.md).
+
+Targets and profiles are stored in the `.octos` file ([format](../reference/project-file-format.md)).

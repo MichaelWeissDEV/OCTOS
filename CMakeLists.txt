@@ -172,6 +172,8 @@ endif()
 # Automated Tests
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    # A hung GUI test (e.g. an unexpected modal dialog) must fail, not block CI forever.
+    set(DART_TESTING_TIMEOUT 300 CACHE STRING "Per-test timeout in seconds")
     enable_testing()
     add_subdirectory(tests)
 endif()

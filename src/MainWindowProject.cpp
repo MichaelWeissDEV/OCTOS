@@ -345,7 +345,14 @@ void MainWindow::setupProjectAndProfileMenus() {
     QAction* addFile = projectMenu->addAction("Add &File…", this, &MainWindow::onAddProjectFile);
     projectMenu->addSeparator();
     QAction* closeProj = projectMenu->addAction("&Close Project", this, &MainWindow::onCloseProject);
-    m_projectOnlyActions << saveProj << saveProjAs << addFile << closeProj;
+    projectMenu->insertSeparator(closeProj);
+    m_targetMenu = projectMenu->addMenu("Active &Target");
+    m_projectProfileMenu = projectMenu->addMenu("Active &Profile");
+    QAction* manageProj = projectMenu->addAction("Manage Project &Profiles…", this, &MainWindow::onManageProjectProfiles);
+    projectMenu->insertSeparator(closeProj);
+    m_projectOnlyActions << saveProj << saveProjAs << addFile << closeProj << manageProj << m_targetMenu->menuAction() << m_projectProfileMenu->menuAction();
+    connect(m_targetMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTargetMenus);
+    connect(m_projectProfileMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildTargetMenus);
     for (QAction* a : std::as_const(m_projectOnlyActions)) a->setEnabled(false);
     connect(m_project, &ProjectController::projectChanged, this, [this]() {
         for (QAction* a : std::as_const(m_projectOnlyActions)) a->setEnabled(m_project->isOpen());
@@ -440,6 +447,77 @@ void MainWindow::onResetLayout() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Targets and project profiles
+// ---------------------------------------------------------------------------------------------
+
+void MainWindow::rebuildTargetMenus() {
+    if (!m_targetMenu || !m_projectProfileMenu) return;
+    m_targetMenu->clear();
+    m_projectProfileMenu->clear();
+    if (!m_project->isOpen()) return;
+    const auto& ws = m_project->workspace();
+    const QString activeTarget = ws.configuration().activeTargetName;
+    for (const BuildTarget& t : ws.targets()) {
+        QAction* a = m_targetMenu->addAction(QString("%1  (main: %2)").arg(t.name, t.mainSourceFile.isEmpty() ? "–" : t.mainSourceFile));
+        a->setCheckable(true);
+        a->setChecked(t.name == activeTarget);
+        const QString name = t.name;
+        connect(a, &QAction::triggered, this, [this, name]() { onSelectTarget(name); });
+    }
+    if (!ws.targets().isEmpty()) m_targetMenu->addSeparator();
+    m_targetMenu->addAction("New Target from Current File…", this, &MainWindow::onNewTarget);
+
+    const QString activeProfile = ws.configuration().activeProfileId;
+    if (ws.profiles().isEmpty()) m_projectProfileMenu->addAction("(no project profiles)")->setEnabled(false);
+    for (const CompilerProfile& p : ws.profiles()) {
+        QAction* a = m_projectProfileMenu->addAction(p.name);
+        a->setCheckable(true);
+        a->setChecked(p.id == activeProfile);
+        const QString id = p.id;
+        connect(a, &QAction::triggered, this, [this, id]() { onSelectProjectProfile(id); });
+    }
+}
+
+void MainWindow::onSelectTarget(const QString& name) {
+    if (!m_project->isOpen() || !m_project->setActiveTarget(name)) return;
+    const BuildTarget* t = m_project->workspace().findTarget(name);
+    if (t && !t->mainSourceFile.isEmpty()) openProjectFile(t->mainSourceFile);   // the target's main file becomes the compiled file
+}
+
+void MainWindow::onNewTarget() {
+    if (!m_project->isOpen()) return;
+    const QString main = m_tabPath.value(m_inputEditor);
+    if (main.isEmpty()) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, "New Target", QString("Target name (main file: %1):").arg(main), QLineEdit::Normal, "", &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (m_project->workspace().findTarget(name)) { QMessageBox::warning(this, "New Target", "A target with this name already exists."); return; }
+    if (m_project->ensureTargetForMain(name, main)) m_project->setActiveTarget(name);
+}
+
+void MainWindow::onSelectProjectProfile(const QString& id) {
+    if (!m_project->isOpen() || !m_project->setActiveProfile(id)) return;
+    const CompilerProfile* p = m_project->workspace().findProfile(id);
+    if (!p) return;
+    for (CompilerOutputPane* pane : std::as_const(m_outputPanes)) applyProfileToPane(*p, pane);   // the active profile drives the panes
+    onPaneSettingsChanged();
+}
+
+void MainWindow::onManageProjectProfiles() {
+    if (!m_project->isOpen()) return;
+    ProfileDialog dlg(ProfileStore::fromProfiles(m_project->workspace().profiles()), installedCompilerImages(), this);
+    dlg.setWindowTitle("Project Profiles – " + m_project->workspace().name());
+    if (dlg.exec() != QDialog::Accepted) return;
+    const ProfileStore edited = dlg.result();
+    // Apply the difference to the project (deleted, added, changed) so dirty tracking sees it.
+    for (const CompilerProfile& old : m_project->workspace().profiles()) {
+        if (!edited.find(old.id)) m_project->removeProfile(old.id);
+    }
+    for (const CompilerProfile& p : edited.profiles()) m_project->addOrUpdateProfile(p);
+    rebuildApplyProfileMenu();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Profiles
 // ---------------------------------------------------------------------------------------------
 
@@ -471,9 +549,15 @@ QString MainWindow::paneTitle(CompilerOutputPane* pane) const {
 void MainWindow::applyProfileToPane(const CompilerProfile& profile, CompilerOutputPane* pane) {
     pane->setLanguage(profile.language);                // refreshes the compiler list for that language
     if (!profile.compilerImage.isEmpty()) {
-        if (pane->hasCompiler(profile.compilerImage)) pane->setSelectedCompiler(profile.compilerImage);
-        else QMessageBox::warning(this, "Profile", QString("The image '%1' of profile '%2' is not installed. Install it in the Compiler Manager.")
-                                                       .arg(profile.compilerImage, profile.name));
+        if (pane->hasCompiler(profile.compilerImage)) {
+            pane->setSelectedCompiler(profile.compilerImage);
+        } else {
+            // Not a modal dialog: comparing two profiles would otherwise stop the UI twice.
+            const QString msg = QString("The image '%1' of profile '%2' is not installed. Install it in the Compiler Manager (Tools menu); the other profile settings were applied.")
+                                    .arg(profile.compilerImage, profile.name);
+            pane->setNotice(msg, false);
+            statusBar()->showMessage(msg, 10000);
+        }
     }
     pane->setCompilerFlags(profile.effectiveFlags());
     pane->setSyntaxFlavor(profile.syntaxFlavor);
