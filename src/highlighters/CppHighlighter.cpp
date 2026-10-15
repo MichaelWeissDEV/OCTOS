@@ -1,9 +1,10 @@
 #include "CppHighlighter.h"
+#include "../ui/Theme.h"
 
 CppHighlighter::CppHighlighter(QTextDocument* parent) : QSyntaxHighlighter(parent) {
     HighlightingRule rule;
 
-    m_keywordFormat.setForeground(QColor("#569CD6"));
+    m_keywordFormat.setForeground(Theme::syntaxColor(SyntaxRole::Keyword));
     m_keywordFormat.setFontWeight(QFont::Bold);
 
     QStringList keywords = {"asm",
@@ -75,10 +76,11 @@ CppHighlighter::CppHighlighter(QTextDocument* parent) : QSyntaxHighlighter(paren
     for (const QString& keyword : keywords) {
         rule.pattern = QRegularExpression("\\b" + keyword + "\\b");
         rule.format = m_keywordFormat;
+    rule.role = SyntaxRole::Keyword;
         m_rules.append(rule);
     }
 
-    m_typeFormat.setForeground(QColor("#4EC9B0"));
+    m_typeFormat.setForeground(Theme::syntaxColor(SyntaxRole::Type));
 
     QStringList types = {"std",      "vector",  "string", "map",        "set",
                          "queue",    "stack",   "pair",   "unique_ptr", "shared_ptr",
@@ -87,52 +89,86 @@ CppHighlighter::CppHighlighter(QTextDocument* parent) : QSyntaxHighlighter(paren
     for (const QString& type : types) {
         rule.pattern = QRegularExpression("\\b" + type + "\\b");
         rule.format = m_typeFormat;
+    rule.role = SyntaxRole::Type;
         m_rules.append(rule);
     }
 
-    m_stringFormat.setForeground(QColor("#CE9178"));
+    m_stringFormat.setForeground(Theme::syntaxColor(SyntaxRole::String));
     rule.pattern = QRegularExpression("\"(?:[^\\\\\"]|\\\\.)*\"");
     rule.format = m_stringFormat;
+    rule.role = SyntaxRole::String;
     m_rules.append(rule);
 
     rule.pattern = QRegularExpression("'(?:[^\\\\']|\\\\.)*'");
     rule.format = m_stringFormat;
+    rule.role = SyntaxRole::String;
     m_rules.append(rule);
 
-    m_numberFormat.setForeground(QColor("#B5CEA8"));
+    m_numberFormat.setForeground(Theme::syntaxColor(SyntaxRole::Number));
     rule.pattern = QRegularExpression("\\b(0x[0-9a-fA-F]+|\\d+\\.?\\d*|\\d+)\\b");
     rule.format = m_numberFormat;
+    rule.role = SyntaxRole::Number;
     m_rules.append(rule);
 
-    m_commentFormat.setForeground(QColor("#6A9955"));
+    m_commentFormat.setForeground(Theme::syntaxColor(SyntaxRole::Comment));
     m_commentFormat.setFontItalic(true);
 
     rule.pattern = QRegularExpression("//.*$");
     rule.format = m_commentFormat;
+    rule.role = SyntaxRole::Comment;
     m_rules.append(rule);
 
     rule.pattern = QRegularExpression("/\\*.*?\\*/");
     rule.pattern.setPatternOptions(QRegularExpression::DotMatchesEverythingOption);
     rule.format = m_commentFormat;
+    rule.role = SyntaxRole::Comment;
     m_rules.append(rule);
 
-    m_functionFormat.setForeground(QColor("#DCDCAA"));
+    m_functionFormat.setForeground(Theme::syntaxColor(SyntaxRole::Function));
     rule.pattern = QRegularExpression("\\b[A-Za-z_][A-Za-z0-9_]*(?=\\()");
     rule.format = m_functionFormat;
+    rule.role = SyntaxRole::Function;
     m_rules.append(rule);
 
-    m_preprocessorFormat.setForeground(QColor("#9CDCFE"));
+    m_preprocessorFormat.setForeground(Theme::syntaxColor(SyntaxRole::Preprocessor));
     m_preprocessorFormat.setFontWeight(QFont::Bold);
 
     rule.pattern = QRegularExpression(
         "^\\s*#\\s*(?:include|define|ifdef|ifndef|endif|if|else|elif|pragma).*$");
     rule.format = m_preprocessorFormat;
+    rule.role = SyntaxRole::Preprocessor;
     m_rules.append(rule);
 }
 
 #include <utility>
 
+void CppHighlighter::recolorFormats() {
+    for (auto& rule : m_rules) rule.format.setForeground(Theme::syntaxColor(rule.role));
+    m_keywordFormat.setForeground(Theme::syntaxColor(SyntaxRole::Keyword));
+    m_typeFormat.setForeground(Theme::syntaxColor(SyntaxRole::Type));
+    m_stringFormat.setForeground(Theme::syntaxColor(SyntaxRole::String));
+    m_numberFormat.setForeground(Theme::syntaxColor(SyntaxRole::Number));
+    m_commentFormat.setForeground(Theme::syntaxColor(SyntaxRole::Comment));
+    m_functionFormat.setForeground(Theme::syntaxColor(SyntaxRole::Function));
+    m_preprocessorFormat.setForeground(Theme::syntaxColor(SyntaxRole::Preprocessor));
+}
+
+void CppHighlighter::applyTheme() {
+    for (auto& rule : m_rules) rule.format.setForeground(Theme::syntaxColor(rule.role));
+    m_keywordFormat.setForeground(Theme::syntaxColor(SyntaxRole::Keyword));
+    m_typeFormat.setForeground(Theme::syntaxColor(SyntaxRole::Type));
+    m_stringFormat.setForeground(Theme::syntaxColor(SyntaxRole::String));
+    m_numberFormat.setForeground(Theme::syntaxColor(SyntaxRole::Number));
+    m_commentFormat.setForeground(Theme::syntaxColor(SyntaxRole::Comment));
+    m_functionFormat.setForeground(Theme::syntaxColor(SyntaxRole::Function));
+    m_preprocessorFormat.setForeground(Theme::syntaxColor(SyntaxRole::Preprocessor));
+    m_themeGeneration = Theme::generation();
+    recolorFormats();
+    rehighlight();
+}
+
 void CppHighlighter::highlightBlock(const QString& text) {
+    if (m_themeGeneration != Theme::generation()) { m_themeGeneration = Theme::generation(); recolorFormats(); }
     for (const HighlightingRule& rule : std::as_const(m_rules)) {
         QRegularExpressionMatchIterator matchIterator = rule.pattern.globalMatch(text);
         while (matchIterator.hasNext()) {

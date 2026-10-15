@@ -41,7 +41,59 @@ bool DockerExecutionConfig::validate(QString* errorMsg) const {
         return false;
     }
 
+    if (maxSourceBytes < 1024 || maxSourceBytes > 64 * 1024 * 1024) {
+        if (errorMsg) *errorMsg = QString("Invalid max source size: %1. Expected between 1KB and 64MB.").arg(maxSourceBytes);
+        return false;
+    }
+
+    if (maxTotalArtifactBytes < maxFileSizeBytes || maxTotalArtifactBytes > 1024LL * 1024 * 1024) {
+        if (errorMsg) *errorMsg = QString("Invalid total artifact size: %1.").arg(maxTotalArtifactBytes);
+        return false;
+    }
+
+    if (tmpfsSizeMb < 8 || tmpfsSizeMb > 4096) {
+        if (errorMsg) *errorMsg = QString("Invalid tmpfs size: %1 MB. Expected between 8 and 4096.").arg(tmpfsSizeMb);
+        return false;
+    }
+
+    if (dockerProgram.trimmed().isEmpty()) {
+        if (errorMsg) *errorMsg = "Docker program must not be empty.";
+        return false;
+    }
+
+    if (startTimeoutMs < 500 || startTimeoutMs > 60000 || cleanupTimeoutMs < 500 || cleanupTimeoutMs > 120000) {
+        if (errorMsg) *errorMsg = "Invalid start/cleanup timeout.";
+        return false;
+    }
+
     return true;
+}
+
+DockerExecutionConfig DockerExecutionConfig::sanitized() const {
+    const DockerExecutionConfig def;
+    DockerExecutionConfig c = *this;
+    auto invalid = [](const DockerExecutionConfig& probe) { return !probe.validate(); };
+
+    // Probe each field on an otherwise-default config so one bad value cannot reset the others.
+    auto probe = [&](auto assign) {
+        DockerExecutionConfig p;
+        assign(p);
+        return !invalid(p);
+    };
+    if (!probe([&](DockerExecutionConfig& p) { p.memoryLimit = c.memoryLimit; })) c.memoryLimit = def.memoryLimit;
+    if (!probe([&](DockerExecutionConfig& p) { p.cpuLimit = c.cpuLimit; })) c.cpuLimit = def.cpuLimit;
+    if (!probe([&](DockerExecutionConfig& p) { p.pidsLimit = c.pidsLimit; })) c.pidsLimit = def.pidsLimit;
+    if (!probe([&](DockerExecutionConfig& p) { p.defaultTimeoutMs = c.defaultTimeoutMs; })) c.defaultTimeoutMs = def.defaultTimeoutMs;
+    if (!probe([&](DockerExecutionConfig& p) { p.maxOutputBytes = c.maxOutputBytes; })) c.maxOutputBytes = def.maxOutputBytes;
+    if (!probe([&](DockerExecutionConfig& p) { p.maxFileSizeBytes = c.maxFileSizeBytes; })) c.maxFileSizeBytes = def.maxFileSizeBytes;
+    if (!probe([&](DockerExecutionConfig& p) { p.maxSourceBytes = c.maxSourceBytes; })) c.maxSourceBytes = def.maxSourceBytes;
+    if (!probe([&](DockerExecutionConfig& p) { p.tmpfsSizeMb = c.tmpfsSizeMb; })) c.tmpfsSizeMb = def.tmpfsSizeMb;
+    if (!probe([&](DockerExecutionConfig& p) { p.dockerProgram = c.dockerProgram; })) c.dockerProgram = def.dockerProgram;
+    if (!probe([&](DockerExecutionConfig& p) { p.startTimeoutMs = c.startTimeoutMs; })) c.startTimeoutMs = def.startTimeoutMs;
+    if (!probe([&](DockerExecutionConfig& p) { p.cleanupTimeoutMs = c.cleanupTimeoutMs; })) c.cleanupTimeoutMs = def.cleanupTimeoutMs;
+    if (c.maxTotalArtifactBytes < c.maxFileSizeBytes || c.maxTotalArtifactBytes > 1024LL * 1024 * 1024)
+        c.maxTotalArtifactBytes = qMax(def.maxTotalArtifactBytes, c.maxFileSizeBytes);
+    return c;
 }
 
 DockerExecutionConfig DockerExecutionConfig::fromSettings(const AppSettings& settings) {
@@ -62,15 +114,7 @@ DockerExecutionConfig DockerExecutionConfig::fromSettings(const AppSettings& set
         config.pidsLimit = pids;
     }
 
-    // Ensure resulting config is strictly valid; fall back to safe defaults if settings are corrupted
-    QString error;
-    if (!config.validate(&error)) {
-        DockerExecutionConfig fallback;
-        fallback.memoryLimit = "512m";
-        fallback.cpuLimit = "1.5";
-        fallback.pidsLimit = 128;
-        return fallback;
-    }
-
-    return config;
+    // Every field is validated on its own; a single corrupted setting no longer
+    // discards the other (valid) ones. Only invalid fields fall back to defaults.
+    return config.sanitized();
 }

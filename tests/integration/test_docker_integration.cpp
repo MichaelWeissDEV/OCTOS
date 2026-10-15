@@ -1,3 +1,4 @@
+#include "../TestSupport.h"
 #include <QTest>
 #include <QProcess>
 #include "backend/DockerExecutionBackend.h"
@@ -318,5 +319,5 @@ void TestDockerIntegration::testAdaExperimental() {
     QVERIFY(res.state == JobState::Completed || res.state == JobState::Failed);
 }
 
-QTEST_MAIN(TestDockerIntegration)
+OCTOS_TEST_MAIN(TestDockerIntegration)
 #include "test_docker_integration.moc"

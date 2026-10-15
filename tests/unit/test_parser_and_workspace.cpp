@@ -1,3 +1,4 @@
+#include "../TestSupport.h"
 #include <QTest>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
@@ -135,7 +136,7 @@ void TestParserAndWorkspace::testCompilationArtifact()
     CompilationArtifact artifact;
     artifact.type = ArtifactType::Assembly;
     artifact.name = "output.s";
-    artifact.originPath = "/tmp/output.s";
+    artifact.containerPath = "/output/output.s";
     artifact.sizeBytes = 1024;
     artifact.content = "pushq %rbp";
 
@@ -147,7 +148,7 @@ void TestParserAndWorkspace::testCompilationArtifact()
     CompilationArtifact llvmIr;
     llvmIr.type = ArtifactType::LLVM_IR;
     llvmIr.name = "test.ll";
-    llvmIr.originPath = "/tmp/test.ll";
+    llvmIr.containerPath = "/output/test.ll";
     llvmIr.sizeBytes = 512;
     llvmIr.content = "; ModuleID = 'test.cpp'\n";
 
@@ -308,5 +309,5 @@ void TestParserAndWorkspace::testWorkspaceFilePersistence()
     QCOMPARE(loaded.sourceFiles().first().content, sf.content);
 }
 
-QTEST_MAIN(TestParserAndWorkspace)
+OCTOS_TEST_MAIN(TestParserAndWorkspace)
 #include "test_parser_and_workspace.moc"

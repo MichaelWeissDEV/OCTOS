@@ -24,6 +24,9 @@ private slots:
     void onSearchTextChanged(const QString& text);
     void onDownloadClicked();
     void onDeleteClicked();
+    void onVerifyClicked();
+    void onToolchainProbed(const QString& imageName, const ToolchainProbeResult& result);
+    void onInstalledImagesRefreshFailed(const QString& message);
     void onRefreshClicked();
 
     void onTagsReceived(CompilerCategory category, const QVector<DockerImage>& images);

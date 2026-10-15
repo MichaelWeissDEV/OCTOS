@@ -1,4 +1,6 @@
+#include "../TestSupport.h"
 #include <QTest>
+#include <QDirIterator>
 #include <QTemporaryFile>
 #include "core/AppSettings.h"
 #include "managers/RecentFilesManager.h"
@@ -8,8 +10,25 @@ class TestSettingsAndFiles : public QObject {
 
 private slots:
     void testAppSettingsDefaultsAndBounds();
+    void testSettingsAreIsolatedFromUserPreferences();
     void testRecentFilesOrderingAndLimit();
 };
+
+void TestSettingsAndFiles::testSettingsAreIsolatedFromUserPreferences() {
+    // Every test process redirects settings (see tests/TestSupport.h): nothing may reach the native store.
+    const QString dir = qEnvironmentVariable("OCTOS_SETTINGS_DIR");
+    QVERIFY2(!dir.isEmpty(), "test settings are not isolated");
+    QCOMPARE(octosSettingsFormat(), QSettings::IniFormat);
+    AppSettings::instance().setLayoutBlob("isolationProbe", "x");
+    AppSettings::instance().sync();
+    bool foundIni = false;
+    QDirIterator it(dir, {"*.ini"}, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) { it.next(); foundIni = true; }
+    QVERIFY2(foundIni, "settings were not written below OCTOS_SETTINGS_DIR");
+    RecentFilesManager recent;                           // the second QSettings user in the application
+    recent.clearRecentFiles();
+    QVERIFY(recent.saveToSettings());                   // writes through the redirected store
+}
 
 void TestSettingsAndFiles::testAppSettingsDefaultsAndBounds() {
     auto& settings = AppSettings::instance();
@@ -100,5 +119,5 @@ void TestSettingsAndFiles::testRecentFilesOrderingAndLimit() {
     QVERIFY(manager.getRecentFiles().isEmpty());
 }
 
-QTEST_MAIN(TestSettingsAndFiles)
+OCTOS_TEST_MAIN(TestSettingsAndFiles)
 #include "test_settings_and_files.moc"

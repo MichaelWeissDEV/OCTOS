@@ -1,3 +1,4 @@
+#include "../TestSupport.h"
 #include <QTest>
 #include "utils/AssemblyTextProcessor.h"
 
@@ -106,5 +107,5 @@ void TestAssemblyProcessor::testDemangle() {
     QVERIFY(result.filteredText.contains("foo(int)"));
 }
 
-QTEST_MAIN(TestAssemblyProcessor)
+OCTOS_TEST_MAIN(TestAssemblyProcessor)
 #include "test_assembly_processor.moc"

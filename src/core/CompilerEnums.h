@@ -31,6 +31,14 @@ enum class CompilerCategory {
     Ada
 };
 
+// Rust crate type. Auto picks Binary if the source defines `fn main`, otherwise Library, so
+// snippets consisting only of functions compile to assembly without a main().
+enum class RustCrateType {
+    Auto,
+    Binary,
+    Library
+};
+
 enum class JobState {
     Queued,
     Starting,

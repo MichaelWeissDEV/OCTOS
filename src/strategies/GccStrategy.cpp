@@ -38,10 +38,13 @@ QStringList GccStrategy::buildCompilerArgs(const CompilationRequest& req,
     args << "-fno-asynchronous-unwind-tables";
 
     // Syntax flavor
-    if (req.syntaxFlavor == SyntaxFlavor::Intel) {
-        args << "-masm=intel";
-    } else {
-        args << "-masm=att";
+    // -masm= exists only on x86 targets (GCC rejects it on aarch64).
+    if (req.targetsX86()) {
+        if (req.syntaxFlavor == SyntaxFlavor::Intel) {
+            args << "-masm=intel";
+        } else {
+            args << "-masm=att";
+        }
     }
 
     // Parse user flags
@@ -61,6 +64,13 @@ QStringList GccStrategy::buildCompilerArgs(const CompilationRequest& req,
     }
 
     args.append(userFlags);
+
+    // Project mode: headers sit next to / below the main file inside the sandbox.
+    if (!req.extraFiles.isEmpty()) {
+        args << "-I/input";
+        const int slash = req.mainFilePath.lastIndexOf('/');
+        if (slash > 0) args << ("-I/input/" + req.mainFilePath.left(slash));
+    }
 
     // Input and output
     args << inputFilePath;

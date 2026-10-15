@@ -16,16 +16,16 @@ QStringList PythonStrategy::buildCompilerArgs(const CompilationRequest& req,
         "src = sys.argv[1]\n"
         "dst = sys.argv[2]\n"
         "try:\n"
-        "    py_compile.compile(src, cfile=dst, doraise=True)\n"
         "    code = compile(open(src, 'r', encoding='utf-8', errors='replace').read(), src, 'exec')\n"
+        "    py_compile.compile(src, cfile=dst, doraise=True)\n"
         "    print('; CPython Bytecode Disassembly (Not native machine assembly)')\n"
-        "    print('; Source: ' + src + '\\n')\n"
+        "    print('; Python ' + sys.version.split()[0] + ' | Source: ' + src + '\\n')\n"
         "    dis.dis(code)\n"
         "except SyntaxError as e:\n"
         "    sys.stderr.write(f'  File \"{e.filename}\", line {e.lineno}, col {e.offset}\\n    {e.text or \"\"}\\nSyntaxError: {e.msg}\\n')\n"
         "    sys.exit(1)\n"
         "except Exception as e:\n"
-        "    sys.stderr.write(str(e) + '\\n')\n"
+        "    sys.stderr.write(f'  File \"{src}\", line 0\\n    \\n{type(e).__name__}: {e}\\n')\n"
         "    sys.exit(1)\n";
 
     args << pythonCode;
@@ -68,7 +68,7 @@ QVector<Diagnostic> PythonStrategy::parseDiagnostics(const QString& compilerOutp
     QVector<Diagnostic> list;
     // Example: File "source.py", line 2, col 5 ... SyntaxError: invalid syntax
     static const QRegularExpression pyDiagRegex(
-        QStringLiteral("File \"([^\"]+)\", line (\\d+)(?:, col (\\d+))?.*?\\n.*?\\n([A-Za-z]+Error): (.*)"),
+        QStringLiteral("File \"([^\"]+)\", line (\\d+)(?:, col (\\d+))?[^\\n]*\\n(?:[^\\n]*\\n)*?([A-Za-z]+Error): ([^\\n]*)"),
         QRegularExpression::MultilineOption);
 
     QRegularExpressionMatchIterator it = pyDiagRegex.globalMatch(compilerOutput);

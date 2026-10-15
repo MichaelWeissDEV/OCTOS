@@ -1,3 +1,4 @@
+#include "../TestSupport.h"
 #include <QTest>
 #include <QStringList>
 #include "strategies/LanguageStrategyRegistry.h"
@@ -15,6 +16,7 @@ private slots:
     void testClangStrategyArgs();
     void testRustStrategyNoGccFlags();
     void testRustSyntaxFlavor();
+    void testX86OnlyFlagsAreOmittedForArm();
     void testJavaClassDetection();
     void testJavaStrategyArgs();
     void testPythonDestinationSafe();
@@ -105,6 +107,32 @@ void TestCompilerStrategies::testRustStrategyNoGccFlags() {
     QVERIFY(!args.contains("-masm=intel"));
     QVERIFY(!args.contains("-fno-asynchronous-unwind-tables"));
     QVERIFY(!args.contains("-S"));
+}
+
+void TestCompilerStrategies::testX86OnlyFlagsAreOmittedForArm() {
+    auto& registry = LanguageStrategyRegistry::instance();
+    auto hasMasm = [](const QStringList& a) { for (const QString& s : a) if (s.startsWith("-masm=")) return true; return false; };
+    for (Language lang : {Language::Cpp, Language::C}) {
+        for (const char* image : {"gcc:13", "silkeh/clang:17"}) {
+            const auto* strat = registry.getStrategy(lang, image);
+            QVERIFY(strat);
+            CompilationRequest req;
+            req.language = lang; req.compilerImage = image; req.syntaxFlavor = SyntaxFlavor::Intel;
+            QVERIFY2(hasMasm(strat->buildCompilerArgs(req, "/input/source", "/output")), image);       // unknown arch = x86 default
+            req.targetArchitecture = "x86_64";
+            QVERIFY(hasMasm(strat->buildCompilerArgs(req, "/input/source", "/output")));
+            req.targetArchitecture = "aarch64";                                                       // GCC aborts on -masm= there
+            QVERIFY2(!hasMasm(strat->buildCompilerArgs(req, "/input/source", "/output")), image);
+            req.targetArchitecture = "arm64";
+            QVERIFY(!hasMasm(strat->buildCompilerArgs(req, "/input/source", "/output")));
+        }
+    }
+    const auto* rust = registry.getStrategy(Language::Rust, "rust:1.75");
+    CompilationRequest rr; rr.language = Language::Rust; rr.compilerImage = "rust:1.75";
+    rr.targetArchitecture = "aarch64";
+    QVERIFY(!rust->buildCompilerArgs(rr, "/input/source.rs", "/output").join(' ').contains("x86-asm-syntax"));
+    rr.targetArchitecture = "x86_64";
+    QVERIFY(rust->buildCompilerArgs(rr, "/input/source.rs", "/output").join(' ').contains("x86-asm-syntax"));
 }
 
 void TestCompilerStrategies::testRustSyntaxFlavor() {
@@ -257,5 +285,5 @@ void TestCompilerStrategies::testCompilerCompatibilityFilter() {
     QVERIFY(!reg.isImageCompatibleWithLanguage("trusty-rust-backend", Language::Rust));
 }
 
-QTEST_MAIN(TestCompilerStrategies)
+OCTOS_TEST_MAIN(TestCompilerStrategies)
 #include "test_compiler_strategies.moc"

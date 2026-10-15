@@ -37,13 +37,20 @@ nav:
     - Assembly View: user-guide/assembly-view.md
     - Filters: user-guide/filters.md
     - Compiler Manager: user-guide/compiler-manager.md
+    - Projects, Profiles & Analysis: user-guide/projects-and-analysis.md
   - Languages & Compilers:
     - Compiler Support: compilers/index.md
   - Development:
     - Overview: development/index.md
     - Architecture: development/architecture.md
     - Language Strategies: development/language-strategies.md
+    - Job Manager: development/job-manager.md
     - Docker Backend: development/docker-backend.md
+    - Compiler Registry: development/compiler-registry.md
+    - Assembly Parser: development/assembly-parser.md
+    - Diff Engine: development/diff-engine.md
+    - Workspaces & Artifacts: development/workspaces.md
+    - Testing & Quality: development/testing.md
   - Reference:
     - Keyboard Shortcuts: reference/keyboard-shortcuts.md
     - Project Structure: reference/project-structure.md

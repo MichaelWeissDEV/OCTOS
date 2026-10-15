@@ -19,52 +19,18 @@
 #include "backend/DockerCompilerManager.h"
 #include "highlighters/AsmHighlighter.h"
 #include "highlighters/CppHighlighter.h"
+#include "managers/ProjectController.h"
 #include "managers/RecentFilesManager.h"
 #include "managers/SnippetManager.h"
 #include "ui/CompilerManagerDialog.h"
+#include "ui/CodeEditor.h"
 #include "ui/CompilerOutputPane.h"
 #include "ui/Theme.h"
 #include "utils/AssemblyTextProcessor.h"
 
-class LineNumberArea;
-
-class CodeEditor : public QPlainTextEdit {
-    Q_OBJECT
-
-public:
-    explicit CodeEditor(QWidget* parent = nullptr);
-    void lineNumberAreaPaintEvent(QPaintEvent* event);
-    int lineNumberAreaWidth();
-    void enableOpcodeTooltips(bool enable = true);
-
-protected:
-    void resizeEvent(QResizeEvent* event) override;
-    void keyPressEvent(QKeyEvent* event) override;
-    bool event(QEvent* event) override;
-    bool eventFilter(QObject* watched, QEvent* event) override;
-
-private slots:
-    void updateLineNumberAreaWidth(int);
-    void highlightCurrentLine();
-    void updateLineNumberArea(const QRect&, int);
-
-private:
-    LineNumberArea* m_lineNumberArea;
-    bool m_opcodeTooltipsEnabled{false};
-};
-
-class LineNumberArea : public QWidget {
-public:
-    explicit LineNumberArea(CodeEditor* editor) : QWidget(editor), m_codeEditor(editor) {}
-
-    QSize sizeHint() const override;
-
-protected:
-    void paintEvent(QPaintEvent* event) override;
-
-private:
-    CodeEditor* m_codeEditor;
-};
+class AnalysisPanel;
+class ProjectExplorerDock;
+class QDockWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -72,6 +38,18 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
+
+    // Accessors for the application shell and tests
+    ProjectController* projectController() const { return m_project; }
+    CodeEditor* activeEditor() const { return m_inputEditor; }
+    QTabWidget* editorTabs() const { return m_editorTabs; }
+    AnalysisPanel* analysisPanel() const { return m_analysisPanel; }
+    ProjectExplorerDock* explorerDock() const { return m_explorerDock; }
+    QVector<CompilerOutputPane*> outputPanes() const { return m_outputPanes; }
+    // Opens (or focuses) a file of the open project in an editor tab.
+    void openProjectFile(const QString& path);
+    // Loads a stand-alone file (asks to close an open project first).
+    void openStandaloneFile(const QString& path) { loadFile(path); }
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -100,6 +78,26 @@ private slots:
     void onDocumentModificationChanged(bool modified);
     void onCompareDiff();
 
+    // Project mode
+    void onNewProject();
+    void onOpenProject();
+    void onSaveProject();
+    void onSaveProjectAs();
+    void onCloseProject();
+    void onAddProjectFile();
+    void onRemoveProjectFile(const QString& path);
+    void onSetMainFile(const QString& path);
+    void onEditorTabChanged(int index);
+    void onEditorTabCloseRequested(int index);
+
+    // Profiles
+    void onManageProfiles();
+    void onSavePaneAsProfile();
+    void onCompareProfiles();
+    void onApplyProfile(const QString& id);
+
+    void onResetLayout();
+
 private:
     void setupUi();
     bool maybeSave();
@@ -109,6 +107,9 @@ private:
     void updateWindowTitle();
     void updateCompilerLists();
     void compileAllPanes();
+    void wirePane(CompilerOutputPane* pane);
+    void showSelectedArtifact(CompilerOutputPane* pane);
+    void updateEditorMarkers();
     void refreshDockerCompilerList();
     QStringList getCompilersForLanguage(Language lang);
     void onPaneLanguageChanged(Language lang, CompilerOutputPane* pane);
@@ -116,8 +117,38 @@ private:
     QColor getHighlightColor(int index, int total);
 
     void updateSourceHighlighter(Language lang);
+    void applyHighlighter(CodeEditor* editor, Language lang);
+
+    // project / tabs / docks (MainWindowProject.cpp)
+    void setupDocks(QMenu* viewMenu);
+    void setupProjectAndProfileMenus();
+    CodeEditor* createEditorTab(const QString& title, const QString& projectPath, Language lang);
+    void setActiveEditor(CodeEditor* editor);
+    void rebuildProjectTabs();
+    void updateTabTitle(CodeEditor* editor);
+    bool maybeSaveProject();
+    // Stand-alone file actions (New, Open, drag & drop, Save As) must not touch an open project.
+    bool leaveProjectForStandalone();
+    QVector<CompilerProfile> allProfiles() const;
+    QString paneTitle(CompilerOutputPane* pane) const;
+    CompilerOutputPane* ensurePaneCount(int n);
+    void applyProfileToPane(const CompilerProfile& profile, CompilerOutputPane* pane);
+    void saveLayout();
+    void restoreLayout();
+    void rebuildApplyProfileMenu();
+    QStringList installedCompilerImages() const;
 
     CodeEditor* m_inputEditor{nullptr};
+    QTabWidget* m_editorTabs{nullptr};
+    QMap<CodeEditor*, QString> m_tabPath;               // project-relative path per editor (empty: stand-alone file)
+    QMap<CodeEditor*, QSyntaxHighlighter*> m_highlighters;
+    QVector<QMetaObject::Connection> m_editorConnections;
+    ProjectController* m_project{nullptr};
+    ProjectExplorerDock* m_explorerDock{nullptr};
+    QDockWidget* m_analysisDock{nullptr};
+    AnalysisPanel* m_analysisPanel{nullptr};
+    QMenu* m_applyProfileMenu{nullptr};
+    QVector<QAction*> m_projectOnlyActions;
     QWidget* m_sourceEditorContainer{nullptr};
     QSplitter* m_splitter{nullptr};
     QSplitter* m_outputSplitter{nullptr};
@@ -145,7 +176,6 @@ private:
 
     QTimer* m_debounceTimer{nullptr};
     DockerCompilerManager* m_dockerManager{nullptr};
-    QVector<AsmHighlighter*> m_asmHighlighters;
     QSyntaxHighlighter* m_sourceHighlighter{nullptr};
     RecentFilesManager m_recentFilesManager;
     SnippetManager m_snippetManager;

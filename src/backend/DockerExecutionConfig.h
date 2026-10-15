@@ -21,7 +21,22 @@ struct DockerExecutionConfig {
     QString runAsUser;
     bool runAsCurrentUser{true};
 
+    // Additional resource bounds
+    qint64 maxSourceBytes{1024 * 1024};            // 1MB of submitted source
+    qint64 maxTotalArtifactBytes{20 * 1024 * 1024}; // sum of all artifacts taken over from a job
+    int tmpfsSizeMb{64};                           // size of the bounded /tmp tmpfs
+    bool disableSwap{true};                        // --memory-swap == --memory
+    bool ipcNone{true};                            // --ipc none
+
+    // Process handling
+    QString dockerProgram{"docker"};               // overridable (tests use a fake client)
+    int startTimeoutMs{5000};
+    int cleanupTimeoutMs{8000};
+
     bool validate(QString* errorMsg = nullptr) const;
+
+    // Returns a copy in which every individually invalid field was replaced by its default.
+    DockerExecutionConfig sanitized() const;
     static DockerExecutionConfig fromSettings(const AppSettings& settings);
 };
 

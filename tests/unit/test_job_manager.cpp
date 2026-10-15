@@ -1,5 +1,12 @@
+#include "../TestSupport.h"
 #include <QTest>
+#include <QStandardPaths>
 #include <QSignalSpy>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <QSet>
+#include <QHash>
+#include <atomic>
 #include <QThread>
 #include <thread>
 #include <vector>
@@ -10,6 +17,8 @@ class TestJobManager : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase() { QStandardPaths::setTestModeEnabled(true); }  // never touch the user's real settings
+
     void testBasicJobExecution();
     void testRevisionInvalidation();
     void testJobCancellation();
@@ -27,6 +36,15 @@ private slots:
     void testShutdownWithRunningJobs();
     void testStaleJobIdSameRevision();
     void testRapidFlagChangesCoalescing();
+
+    // Scheduler (bounded queue) tests
+    void testSinglePaneHundredRapidSubmits();
+    void testFivePanesDifferentProfiles();
+    void testTwentyConcurrentJobsRespectLimit();
+    void testPendingQueueIsBounded();
+    void testSameRevisionRepeatedCompile();
+    void testShutdownReturnsCleanAndRejectsNewJobs();
+    void testShutdownWithUnresponsiveBackend();
 };
 
 void TestJobManager::testBasicJobExecution() {
@@ -100,10 +118,18 @@ void TestJobManager::testJobCancellation() {
     req.language = Language::Cpp;
     req.sourceCode = "int main() { return 0; }";
 
+    QSignalSpy spyFinished(&manager, &JobManager::jobFinished);
+    QElapsedTimer t; t.start();
     quint64 jobId = manager.submitJob(req);
     manager.cancelJob(jobId);
 
-    QVERIFY(mockBackend->wasJobCancelled(jobId));
+    // The latest job of the pane reports its cancellation, and does so long before the 200 ms job would end.
+    QVERIFY(spyFinished.wait(1000));
+    QVERIFY2(t.elapsed() < 190, qPrintable(QString("took %1 ms").arg(t.elapsed())));
+    auto res = qvariant_cast<CompilationResult>(spyFinished.at(0).at(0));
+    QCOMPARE(res.jobId, jobId);
+    QCOMPARE(res.state, JobState::Cancelled);
+    QVERIFY(!res.success());
 }
 
 void TestJobManager::testJobTimeout() {
@@ -138,10 +164,18 @@ void TestJobManager::testPaneInvalidation() {
     req.language = Language::Cpp;
     req.sourceCode = "int z = 100;";
 
+    QSignalSpy spyFinished(&manager, &JobManager::jobFinished);
+    QSet<quint64> cancelled;
+    connect(&manager, &JobManager::jobStateChanged, this,
+            [&cancelled](quint64 id, quint64, JobState st) { if (st == JobState::Cancelled) cancelled.insert(id); });
+
     quint64 jobId = manager.submitJob(req);
     manager.invalidatePane(42);
 
     QVERIFY(mockBackend->wasJobCancelled(jobId));
+    QTRY_VERIFY_WITH_TIMEOUT(cancelled.contains(jobId), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(manager.activeJobCount(), 0, 1000);
+    QCOMPARE(spyFinished.count(), 0);                 // a closed pane receives nothing
 }
 
 void TestJobManager::testCancellationBeforeJobStart() {
@@ -169,10 +203,11 @@ void TestJobManager::testCancellationBeforeJobStart() {
     // Cancel job2 before it starts
     manager.cancelJob(job2);
 
-    QSignalSpy spyState(&manager, &JobManager::jobStateChanged);
     QTest::qWait(400);
 
-    QVERIFY(mockBackend->wasJobCancelled(job2) || true); // Either cancelled before backend or in backend
+    // job2 was still queued behind job1 (1 slot): it must never reach the backend.
+    QCOMPARE(mockBackend->executedJobCount(), 1);
+    QCOMPARE(manager.activeJobCount(), 0);
 }
 
 void TestJobManager::testCancellationDuringExecution() {
@@ -188,11 +223,19 @@ void TestJobManager::testCancellationDuringExecution() {
     req.language = Language::Cpp;
     req.sourceCode = "int compute();";
 
+    QSignalSpy spyFinished(&manager, &JobManager::jobFinished);
+    QElapsedTimer t; t.start();
     quint64 jobId = manager.submitJob(req);
     QTest::qWait(50); // Let worker start
+    QVERIFY(mockBackend->executedJobCount() == 1);
     manager.cancelJob(jobId);
 
-    QVERIFY(mockBackend->wasJobCancelled(jobId));
+    QVERIFY(spyFinished.wait(1000));
+    QVERIFY2(t.elapsed() < 280, "a running job must stop early, not run its full 300 ms");
+    auto res = qvariant_cast<CompilationResult>(spyFinished.at(0).at(0));
+    QCOMPARE(res.jobId, jobId);
+    QCOMPARE(res.state, JobState::Cancelled);
+    QVERIFY(mockBackend->wasJobCancelled(jobId));  // and the backend was told
 }
 
 void TestJobManager::testDoubleCancellation() {
@@ -207,11 +250,16 @@ void TestJobManager::testDoubleCancellation() {
     req.sourceCode = "int double_cancel();";
 
     quint64 jobId = manager.submitJob(req);
-    // Double cancel should not crash or throw
+    QSignalSpy spyFinished(&manager, &JobManager::jobFinished);
+    // Double cancel must be harmless and must produce exactly one result
     manager.cancelJob(jobId);
     manager.cancelJob(jobId);
 
-    QVERIFY(mockBackend->wasJobCancelled(jobId));
+    QVERIFY(spyFinished.wait(1000));
+    QTest::qWait(300);
+    QCOMPARE(spyFinished.count(), 1);
+    QCOMPARE(qvariant_cast<CompilationResult>(spyFinished.at(0).at(0)).state, JobState::Cancelled);
+    QCOMPARE(manager.activeJobCount(), 0);
 }
 
 void TestJobManager::testCancellationImmediatelyBeforeCompletion() {
@@ -225,11 +273,20 @@ void TestJobManager::testCancellationImmediatelyBeforeCompletion() {
     req.language = Language::Cpp;
     req.sourceCode = "int near_end();";
 
+    QSignalSpy spyFinished(&manager, &JobManager::jobFinished);
     quint64 jobId = manager.submitJob(req);
     QTest::qWait(90); // Right before completion
     manager.cancelJob(jobId);
 
-    QVERIFY(mockBackend->wasJobCancelled(jobId));
+    // Race by design: either outcome is valid, but it must be consistent and delivered exactly once.
+    QVERIFY(spyFinished.wait(1000));
+    QTest::qWait(150);
+    QCOMPARE(spyFinished.count(), 1);
+    auto res = qvariant_cast<CompilationResult>(spyFinished.at(0).at(0));
+    QCOMPARE(res.jobId, jobId);
+    QVERIFY(res.state == JobState::Cancelled || res.state == JobState::Completed);
+    QCOMPARE(res.success(), res.state == JobState::Completed);
+    QCOMPARE(manager.activeJobCount(), 0);
 }
 
 void TestJobManager::testCancellationImmediatelyAfterCompletion() {
@@ -258,6 +315,12 @@ void TestJobManager::testMultipleConcurrentCancellations() {
     mockBackend->setSimulatedDelayMs(200);
     JobManager manager(mockBackend);
 
+    QSet<quint64> cancelledStates;
+    connect(&manager, &JobManager::jobStateChanged, this,
+            [&cancelledStates](quint64 id, quint64, JobState st) {
+                if (st == JobState::Cancelled) cancelledStates.insert(id);
+            });
+
     QList<quint64> jobs;
     for (int i = 0; i < 10; ++i) {
         CompilationRequest req;
@@ -281,9 +344,14 @@ void TestJobManager::testMultipleConcurrentCancellations() {
         }
     }
 
-    for (quint64 jId : jobs) {
-        QVERIFY(mockBackend->wasJobCancelled(jId));
-    }
+    // Queued jobs are cancelled in the scheduler and never reach the backend;
+    // dispatched ones are cancelled in the backend. Either way nothing may remain.
+    QTRY_COMPARE_WITH_TIMEOUT(manager.activeJobCount(), 0, 3000);
+    QCOMPARE(manager.pendingJobCount(), 0);
+    QCOMPARE(manager.runningJobCount(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(cancelledStates.size(), jobs.size(), 3000);
+    QCOMPARE(cancelledStates.size(), jobs.size());
+    for (quint64 jId : jobs) QVERIFY(cancelledStates.contains(jId));
 }
 
 void TestJobManager::testClosePanelDuringJob() {
@@ -321,6 +389,7 @@ void TestJobManager::testShutdownWithRunningJobs() {
 
     {
         JobManager manager(mockBackend);
+        manager.setMaxParallelJobs(4);   // independent of the machine's persisted settings
         for (int i = 0; i < 4; ++i) {
             CompilationRequest req;
             req.paneId = 300 + i;
@@ -329,11 +398,10 @@ void TestJobManager::testShutdownWithRunningJobs() {
             req.sourceCode = "int shutdown_test();";
             manager.submitJob(req);
         }
-        QTest::qWait(50);
-        // Destructor invokes shutdown()
+        QTRY_COMPARE_WITH_TIMEOUT(mockBackend->executedJobCount(), 4, 2000);
+        QElapsedTimer t; t.start();
+        // Destructor invokes shutdown(): must cancel the 500 ms jobs instead of waiting them out
     }
-
-    // After shutdown, all active jobs should have been cancelled
     QCOMPARE(mockBackend->executedJobCount(), 4);
 }
 
@@ -410,5 +478,187 @@ void TestJobManager::testRapidFlagChangesCoalescing() {
     QVERIFY(foundLast);
 }
 
-QTEST_MAIN(TestJobManager)
+namespace {
+// Backend that records the maximum number of concurrently executing jobs.
+class CountingBackend : public IExecutionBackend {
+public:
+    int delayMs{40};
+    std::atomic<int> current{0};
+    std::atomic<int> maxSeen{0};
+    std::atomic<int> executed{0};
+    QMutex m;
+    QList<quint64> executedPanes;
+    CompilationResult execute(const CompilationRequest& req, const std::function<bool()>& isCancelled) override {
+        int c = ++current;
+        int prev = maxSeen.load();
+        while (c > prev && !maxSeen.compare_exchange_weak(prev, c)) {}
+        ++executed;
+        { QMutexLocker l(&m); executedPanes.append(req.paneId); }
+        for (int i = 0; i < delayMs / 5; ++i) {
+            if (isCancelled && isCancelled()) break;
+            QThread::msleep(5);
+        }
+        --current;
+        CompilationResult r;
+        r.jobId = req.jobId; r.paneId = req.paneId; r.revision = req.revision;
+        r.state = JobState::Completed; r.exitCode = 0;
+        r.rawOutput = req.userArgs;
+        return r;
+    }
+    void cancel(quint64) override {}
+};
+
+// Backend that ignores cancellation for a while (simulates a hung docker client).
+class StubbornBackend : public IExecutionBackend {
+public:
+    std::atomic<bool> release{false};
+    std::atomic<int> cancelCalls{0};
+    std::atomic<int> started{0};
+    CompilationResult execute(const CompilationRequest& req, const std::function<bool()>&) override {
+        ++started;
+        while (!release.load()) QThread::msleep(5);
+        CompilationResult r;
+        r.jobId = req.jobId; r.paneId = req.paneId; r.revision = req.revision;
+        r.state = JobState::Completed;
+        return r;
+    }
+    void cancel(quint64) override { ++cancelCalls; }
+};
+
+CompilationRequest makeReq(quint64 pane, quint64 rev, const QString& args = QString()) {
+    CompilationRequest r;
+    r.paneId = pane; r.revision = rev; r.language = Language::Cpp;
+    r.sourceCode = "int x;"; r.userArgs = args;
+    return r;
+}
+}
+
+void TestJobManager::testSinglePaneHundredRapidSubmits() {
+    auto be = std::make_shared<CountingBackend>();
+    JobManager manager(be);
+    manager.setMaxParallelJobs(2);
+    QSignalSpy fin(&manager, &JobManager::jobFinished);
+
+    quint64 last = 0;
+    for (int i = 1; i <= 100; ++i) {
+        last = manager.submitJob(makeReq(1, i, QString::number(i)));
+        QVERIFY(manager.pendingJobCount() <= 1); // one waiting job per pane, always
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(manager.activeJobCount(), 0, 5000);
+    QTest::qWait(50);
+
+    QCOMPARE(fin.count(), 1);
+    auto res = qvariant_cast<CompilationResult>(fin.at(0).at(0));
+    QCOMPARE(res.jobId, last);
+    QCOMPARE(res.rawOutput, QString("100"));
+    // Never more than one running + one waiting per pane reaches the backend.
+    QVERIFY(be->executed.load() <= 3);
+}
+
+void TestJobManager::testFivePanesDifferentProfiles() {
+    auto be = std::make_shared<CountingBackend>();
+    JobManager manager(be);
+    manager.setMaxParallelJobs(2);
+    QSignalSpy fin(&manager, &JobManager::jobFinished);
+
+    QHash<quint64, quint64> lastJob;
+    for (quint64 pane = 1; pane <= 5; ++pane)
+        lastJob[pane] = manager.submitJob(makeReq(pane, 1, QString("-O%1").arg(pane)));
+
+    QTRY_COMPARE_WITH_TIMEOUT(fin.count(), 5, 5000);
+    QSet<quint64> seen;
+    for (int i = 0; i < fin.count(); ++i) {
+        auto r = qvariant_cast<CompilationResult>(fin.at(i).at(0));
+        QCOMPARE(r.jobId, lastJob.value(r.paneId));
+        QCOMPARE(r.rawOutput, QString("-O%1").arg(r.paneId));
+        seen.insert(r.paneId);
+    }
+    QCOMPARE(seen.size(), 5);
+    QVERIFY(be->maxSeen.load() <= 2);
+}
+
+void TestJobManager::testTwentyConcurrentJobsRespectLimit() {
+    auto be = std::make_shared<CountingBackend>();
+    JobManager manager(be);
+    manager.setMaxParallelJobs(3);
+    QSignalSpy fin(&manager, &JobManager::jobFinished);
+
+    for (quint64 pane = 1; pane <= 20; ++pane) manager.submitJob(makeReq(pane, 1));
+    QVERIFY(manager.runningJobCount() <= 3);
+    QVERIFY(manager.pendingJobCount() <= 20);
+
+    QTRY_COMPARE_WITH_TIMEOUT(fin.count(), 20, 8000);
+    QVERIFY2(be->maxSeen.load() <= 3, qPrintable(QString("max concurrent = %1").arg(be->maxSeen.load())));
+    QVERIFY(be->maxSeen.load() >= 2); // the slots really were used in parallel
+    QCOMPARE(manager.activeJobCount(), 0);
+}
+
+void TestJobManager::testPendingQueueIsBounded() {
+    auto be = std::make_shared<StubbornBackend>();
+    JobManager manager(be);
+    manager.setMaxParallelJobs(1);
+    manager.setMaxPendingJobs(5);
+
+    QSet<quint64> cancelled;
+    connect(&manager, &JobManager::jobStateChanged, this, [&](quint64 id, quint64, JobState s) {
+        if (s == JobState::Cancelled) cancelled.insert(id);
+    });
+
+    for (quint64 pane = 1; pane <= 50; ++pane) manager.submitJob(makeReq(pane, 1));
+    QCOMPARE(manager.runningJobCount(), 1);
+    QCOMPARE(manager.pendingJobCount(), 5);
+    QCOMPARE(manager.activeJobCount(), 6);
+    QCOMPARE(cancelled.size(), 44); // 49 submitted-while-busy minus 5 kept
+
+    be->release = true;
+    QTRY_COMPARE_WITH_TIMEOUT(manager.activeJobCount(), 0, 5000);
+}
+
+void TestJobManager::testSameRevisionRepeatedCompile() {
+    auto be = std::make_shared<CountingBackend>();
+    JobManager manager(be);
+    QSignalSpy fin(&manager, &JobManager::jobFinished);
+    quint64 last = 0;
+    for (int i = 0; i < 6; ++i) last = manager.submitJob(makeReq(7, 3));
+    QTRY_VERIFY_WITH_TIMEOUT(manager.activeJobCount() == 0, 5000);
+    QTest::qWait(30);
+    QCOMPARE(fin.count(), 1);
+    QCOMPARE(qvariant_cast<CompilationResult>(fin.at(0).at(0)).jobId, last);
+}
+
+void TestJobManager::testShutdownReturnsCleanAndRejectsNewJobs() {
+    auto be = std::make_shared<CountingBackend>();
+    be->delayMs = 2000;
+    JobManager manager(be);
+    manager.setMaxParallelJobs(2);
+    for (quint64 pane = 1; pane <= 6; ++pane) manager.submitJob(makeReq(pane, 1));
+    QTest::qWait(30);
+    QElapsedTimer t; t.start();
+    QVERIFY(manager.shutdown(5000));
+    QVERIFY2(t.elapsed() < 1500, "cancellation must interrupt the running jobs");
+    QCOMPARE(manager.activeJobCount(), 0);
+    QCOMPARE(manager.submitJob(makeReq(1, 2)), quint64(0));
+    // queued jobs were dropped, never started
+    QVERIFY(be->executed.load() <= 2);
+}
+
+void TestJobManager::testShutdownWithUnresponsiveBackend() {
+    auto be = std::make_shared<StubbornBackend>();
+    {
+        JobManager manager(be);
+        manager.setShutdownTimeoutMs(200);
+        manager.submitJob(makeReq(1, 1));
+        QTRY_COMPARE_WITH_TIMEOUT(be->started.load(), 1, 2000);
+        QVERIFY(!manager.shutdown(300));       // reports failure instead of pretending success
+        QVERIFY(be->cancelCalls.load() >= 1);  // cancellation was (re)signalled
+        QCOMPARE(manager.submitJob(makeReq(2, 1)), quint64(0));
+        // ~JobManager now runs with the worker still stuck: it must neither hang nor
+        // free anything the worker uses.
+    }
+    // The manager is gone; the late worker finishes against a closed manager (no crash, no delivery).
+    be->release = true;
+    QTRY_COMPARE_WITH_TIMEOUT(be.use_count(), 1, 2000);   // the worker released its backend reference
+}
+
+OCTOS_TEST_MAIN(TestJobManager)
 #include "test_job_manager.moc"

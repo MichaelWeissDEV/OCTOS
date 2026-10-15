@@ -1,9 +1,10 @@
 #include "AsmHighlighter.h"
+#include "../ui/Theme.h"
 
 AsmHighlighter::AsmHighlighter(QTextDocument *parent) : QSyntaxHighlighter(parent) {
     HighlightingRule rule;
 
-    m_instructionFormat.setForeground(QColor("#569CD6"));
+    m_instructionFormat.setForeground(Theme::syntaxColor(SyntaxRole::Keyword));
     m_instructionFormat.setFontWeight(QFont::Bold);
 
     QStringList instructions = {
@@ -24,9 +25,10 @@ AsmHighlighter::AsmHighlighter(QTextDocument *parent) : QSyntaxHighlighter(paren
     rule.pattern =
         QRegularExpression(instructionPattern, QRegularExpression::CaseInsensitiveOption);
     rule.format = m_instructionFormat;
+    rule.role = SyntaxRole::Keyword;
     m_rules.append(rule);
 
-    m_registerFormat.setForeground(QColor("#C586C0"));
+    m_registerFormat.setForeground(Theme::syntaxColor(SyntaxRole::Register));
 
     QStringList registers = {
 
@@ -56,32 +58,58 @@ AsmHighlighter::AsmHighlighter(QTextDocument *parent) : QSyntaxHighlighter(paren
     QString registerPattern = "\\b(" + registers.join("|") + ")\\b";
     rule.pattern = QRegularExpression(registerPattern, QRegularExpression::CaseInsensitiveOption);
     rule.format = m_registerFormat;
+    rule.role = SyntaxRole::Register;
     m_rules.append(rule);
 
-    m_numberFormat.setForeground(QColor("#CE9178"));
+    m_numberFormat.setForeground(Theme::syntaxColor(SyntaxRole::Number));
 
     rule.pattern = QRegularExpression("\\b(0x[0-9a-fA-F]+|\\d+)\\b");
     rule.format = m_numberFormat;
+    rule.role = SyntaxRole::Number;
     m_rules.append(rule);
 
-    m_labelFormat.setForeground(QColor("#6A9955"));
+    m_labelFormat.setForeground(Theme::syntaxColor(SyntaxRole::Label));
     m_labelFormat.setFontWeight(QFont::Bold);
 
     rule.pattern = QRegularExpression("^\\s*[._a-zA-Z][._a-zA-Z0-9]*:");
     rule.format = m_labelFormat;
+    rule.role = SyntaxRole::Label;
     m_rules.append(rule);
 
-    m_commentFormat.setForeground(QColor("#6A9955"));
+    m_commentFormat.setForeground(Theme::syntaxColor(SyntaxRole::Comment));
     m_commentFormat.setFontItalic(true);
 
     rule.pattern = QRegularExpression("[#;].*$");
     rule.format = m_commentFormat;
+    rule.role = SyntaxRole::Comment;
     m_rules.append(rule);
 }
 
 #include <utility>
 
+void AsmHighlighter::recolorFormats() {
+    for (auto& rule : m_rules) rule.format.setForeground(Theme::syntaxColor(rule.role));
+    m_instructionFormat.setForeground(Theme::syntaxColor(SyntaxRole::Keyword));
+    m_registerFormat.setForeground(Theme::syntaxColor(SyntaxRole::Register));
+    m_numberFormat.setForeground(Theme::syntaxColor(SyntaxRole::Number));
+    m_labelFormat.setForeground(Theme::syntaxColor(SyntaxRole::Label));
+    m_commentFormat.setForeground(Theme::syntaxColor(SyntaxRole::Comment));
+}
+
+void AsmHighlighter::applyTheme() {
+    for (auto& rule : m_rules) rule.format.setForeground(Theme::syntaxColor(rule.role));
+    m_instructionFormat.setForeground(Theme::syntaxColor(SyntaxRole::Keyword));
+    m_registerFormat.setForeground(Theme::syntaxColor(SyntaxRole::Register));
+    m_numberFormat.setForeground(Theme::syntaxColor(SyntaxRole::Number));
+    m_labelFormat.setForeground(Theme::syntaxColor(SyntaxRole::Label));
+    m_commentFormat.setForeground(Theme::syntaxColor(SyntaxRole::Comment));
+    m_themeGeneration = Theme::generation();
+    recolorFormats();
+    rehighlight();
+}
+
 void AsmHighlighter::highlightBlock(const QString &text) {
+    if (m_themeGeneration != Theme::generation()) { m_themeGeneration = Theme::generation(); recolorFormats(); }
     for (const HighlightingRule &rule : std::as_const(m_rules)) {
         QRegularExpressionMatchIterator matchIterator = rule.pattern.globalMatch(text);
         while (matchIterator.hasNext()) {

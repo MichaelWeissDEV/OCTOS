@@ -1,8 +1,9 @@
 #include "RecentFilesManager.h"
 
 #include <QFileInfo>
+#include "../core/AppSettings.h"
 
-RecentFilesManager::RecentFilesManager() : m_maxRecentFiles(10), m_settings("OCTOS", "OCTOS") {
+RecentFilesManager::RecentFilesManager() : m_maxRecentFiles(10), m_settings(octosSettingsFormat(), QSettings::UserScope, "OCTOS", "OCTOS") {
     loadFromSettings();
 }
 

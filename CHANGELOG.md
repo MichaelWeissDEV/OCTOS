@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Development work on top of the `0.4.1` state. **No version has been bumped and nothing has been
+released**; this section only records what changed in the working tree.
+
+### Changed — stability
+- **`JobManager` is a real bounded scheduler** in front of the `QThreadPool`: at most `maxParallelJobs` jobs in
+  flight, at most one waiting job per pane (replaced in place), a bounded total queue, no unstarted
+  `QRunnable`s piling up in the pool. Slots are accounted on the GUI thread.
+- **Shutdown waits for the workers for real** (worker counter instead of a fixed `waitForDone`), re-sends
+  cancellation, returns `false` if workers did not terminate and then keeps shared state alive for them.
+- **Docker backend:** `cancel()` never blocks (flag only); the container stays registered until its cleanup
+  has run; cleanup is idempotent, refuses non-`octos_` names, and failures are tracked as leaked containers
+  and retried; no docker process runs under the backend mutex; cancelling a finished job no longer leaks an
+  entry.
+- **Bug fixed — truncation flag:** `artifactTruncated` was reset by `processOutput()`; it is now preserved,
+  the UI gets a warning and the result is not `isComplete()`.
+- **Output limits:** 64-bit arithmetic, separate stdout/stderr limits, UTF-8-safe cuts, flood detection
+  (kill after 4× the limit), source/artifact size limits, artifact read refuses symlinks leaving the
+  sandbox. `docker run` now uses `--pull=never` (no implicit downloads), `--memory-swap`, `--ipc none`, an
+  always-bounded `/tmp` tmpfs and a file-size ulimit (exit 153 → *Limit exceeded*).
+- `DockerExecutionConfig::fromSettings()` validates per field instead of resetting everything.
+
+### Changed — analysis
+- **Diff engine rewritten:** linear-space Myers (O(N+M) memory), explicit budgets, cancellation inside the
+  algorithm, incomplete results clearly flagged, dialect-aware normalisation (ARM64 `#42` is not a comment),
+  label renaming by first appearance, valid unified diff export (hunks, ranges, no-newline marker; round trip
+  verified with the system `patch`).
+- **`DiffDialog` computes asynchronously** (cancellable, newest request wins, safe on close) and uses a virtual
+  `QAbstractTableModel`.
+- **`AssemblyParser` rewritten:** `.type/.size/.globl`-based function boundaries, section tracking, jump-target
+  based basic blocks, an explicit CFG (`Taken`/`Fallthrough`/`Unconditional`/`IndirectUnknown`), structured
+  operands (original text always kept), `.file`/`.loc` source mapping, metrics. ~5× faster after a regex fix.
+- New **Assembly Analysis** panel (functions, blocks, successors, statistics, navigation).
+
+### Changed — compilers & registry
+- **Rust:** explicit crate type (`Auto` → library when there is no `main`), deduplicated flags, edition 2021.
+- **Java:** disassembles all generated classes (packages, inner classes). **Python:** `SyntaxError`s now
+  produce diagnostics; output is labelled CPython bytecode.
+- **Verification states** replace the old "Verified unless experimental": image recognised / plausible /
+  verified (in-image probe: tools, version, architecture, image ID) / failed. Image *ownership* is tracked
+  explicitly; deleting a foreign image needs extra confirmation; `docker images` is never queried
+  synchronously in GUI paths and query failures are reported.
+
+### Added — projects, artifacts, UI
+- Validated, atomically saved project files (`QSaveFile`), format gate, safe relative paths, symlink-safe
+  materialisation; `ProjectController` (per-file dirty state, single-file saves); editor tabs, project
+  explorer, find/replace, auto-indent; user-level **compiler profiles** and *Compare Two Profiles*;
+  extra project files travel into the sandbox.
+- Typed artifacts with ids, provenance, checksum and explicit location lifecycle; artifact selector,
+  structured diagnostics list, editor error markers, per-type highlighters, *Save…*, compile metadata artifact.
+- Architecture-aware compiler flags (no `-masm=` on aarch64).
+- Status badges distinguish compiler / Docker / limit / internal failures; warnings and truncation are shown.
+- **Theme tokens:** every widget takes its colours from the theme (no hard-coded dark colours); contrast is
+  tested for all six themes. Dockable layout persisted between sessions, *Reset Layout*.
+
+### Tests & tooling
+- Test runs are **isolated from the user's preferences** (`OCTOS_SETTINGS_DIR`, `OCTOS_TEST_MAIN`).
+- ThreadSanitizer runs without suppressions (explicit hand-off annotations, mutex-protected result inbox).
+- New suites for the scheduler, Docker backend (scripted fake docker + real daemon flags), parser/CFG on real
+  Clang output, diff engine and dialog, workspace/project controller, registry/probe, themes and main window
+  (offscreen screenshots), fuzz-property tests; libFuzzer targets; `octos_bench`; ThreadSanitizer,
+  AddressSanitizer and UBSan runs; weak assertions (`|| true`, mock-only checks) replaced.
+
+### Known limits
+See `docs/limitations.md`. Notably: no real GNU GCC corpus, x86-64 only parsing, Docker is not a complete
+sandbox for hostile code.
+
 ## [0.4.1] - 2026-10-14
 
 ### Added

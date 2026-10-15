@@ -1,3 +1,4 @@
+#include "../TestSupport.h"
 #include <QTest>
 #include <QTextDocument>
 #include <QElapsedTimer>
@@ -152,6 +153,7 @@ void TestDiffAndHighlighters::testDiffNormalization() {
     opt.ignoreComments = true;
     opt.normalizeLabels = true;
     opt.ignoreWhitespace = true;
+    opt.dialect = AsmDialect::X86ATT;
 
     DiffResult res = AssemblyDiffProcessor::computeDiff(asmA, asmB, opt);
     // With normalization, both versions are considered identical
@@ -178,7 +180,7 @@ void TestDiffAndHighlighters::testDiffBenchmark1k() {
     qint64 elapsed = timer.elapsed();
 
     qDebug() << "1,000 lines diff computed in" << elapsed << "ms, entries:" << res.entries.size();
-    QVERIFY(elapsed < 1000); // Must be well under 1 second
+    // Timing is measured by the separate `octos_bench` target and never asserted in functional tests.
     QVERIFY(res.hasDifferences());
 }
 
@@ -200,7 +202,7 @@ void TestDiffAndHighlighters::testDiffBenchmark10k() {
     qint64 elapsed = timer.elapsed();
 
     qDebug() << "10,000 lines diff computed in" << elapsed << "ms, entries:" << res.entries.size();
-    QVERIFY(elapsed < 3000); // Myers with line hashing must handle 10k in few hundred ms
+    // Timing is measured by the separate `octos_bench` target and never asserted in functional tests.
 }
 
 void TestDiffAndHighlighters::testDiffBenchmark50k() {
@@ -222,7 +224,7 @@ void TestDiffAndHighlighters::testDiffBenchmark50k() {
     qint64 elapsed = timer.elapsed();
 
     qDebug() << "50,000 lines diff computed in" << elapsed << "ms, entries:" << res.entries.size();
-    QVERIFY(elapsed < 5000); // Prefix/suffix trimming handles this almost instantaneously
+    // Timing is measured by the separate `octos_bench` target and never asserted in functional tests.
     QCOMPARE(res.unchanged, 49999);
 }
 
@@ -306,5 +308,5 @@ void TestDiffAndHighlighters::testHighlightersInitialization() {
     QVERIFY(docPy.blockCount() >= 3);
 }
 
-QTEST_MAIN(TestDiffAndHighlighters)
+OCTOS_TEST_MAIN(TestDiffAndHighlighters)
 #include "test_diff_and_highlighters.moc"

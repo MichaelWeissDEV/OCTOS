@@ -164,15 +164,48 @@ bool CompilerRegistry::hasCompilerForImage(const QString& imageName) const {
     return m_imageToId.contains(imageName);
 }
 
+CompilerDefinition CompilerRegistry::applyRuntimeState(CompilerDefinition def) const {
+    def.probe = m_probes.value(def.containerImage, ToolchainProbeResult());
+    def.currentImageId = m_installedIds.value(def.containerImage);
+    if (!def.currentImageId.isEmpty()) def.imageDigest = def.currentImageId;
+    if (def.probeIsCurrent() && !def.probe.architecture.isEmpty()) def.architecture = def.probe.architecture;
+    return def;
+}
+
 CompilerDefinition CompilerRegistry::compilerForImage(const QString& imageName) const {
     if (m_imageToId.contains(imageName)) {
         QString id = m_imageToId.value(imageName);
-        return m_compilersById.value(id);
+        return applyRuntimeState(m_compilersById.value(id));
     }
     return inferOrMatchDefinition(imageName);
 }
 
-bool CompilerRegistry::isOctosManagedImage(const QString& imageName) const {
+void CompilerRegistry::recordProbeResult(const QString& imageName, const ToolchainProbeResult& result) {
+    m_probes.insert(imageName, result);
+}
+
+ToolchainProbeResult CompilerRegistry::probeResultForImage(const QString& imageName) const {
+    return m_probes.value(imageName);
+}
+
+void CompilerRegistry::setInstalledImageId(const QString& imageName, const QString& imageId) {
+    if (imageId.isEmpty()) m_installedIds.remove(imageName);
+    else m_installedIds.insert(imageName, imageId);
+}
+
+QJsonObject CompilerRegistry::exportProbes() const {
+    QJsonObject o;
+    for (auto it = m_probes.constBegin(); it != m_probes.constEnd(); ++it) o[it.key()] = it.value().toJson();
+    return o;
+}
+
+void CompilerRegistry::importProbes(const QJsonObject& obj) {
+    for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+        if (it.value().isObject()) m_probes.insert(it.key(), ToolchainProbeResult::fromJson(it.value().toObject()));
+    }
+}
+
+bool CompilerRegistry::isKnownCompilerImageName(const QString& imageName) const {
     QString img = imageName.toLower();
     // Only genuine compiler images are managed
     return img.startsWith("gcc:") || img.startsWith("silkeh/clang:") ||
@@ -184,7 +217,7 @@ bool CompilerRegistry::isOctosManagedImage(const QString& imageName) const {
 
 CompilerDefinition CompilerRegistry::inferOrMatchDefinition(const QString& imageName) const {
     if (m_imageToId.contains(imageName)) {
-        return m_compilersById.value(m_imageToId.value(imageName));
+        return applyRuntimeState(m_compilersById.value(m_imageToId.value(imageName)));
     }
 
     CompilerDefinition def;
@@ -273,7 +306,7 @@ CompilerDefinition CompilerRegistry::inferOrMatchDefinition(const QString& image
         def.statusMessage = "Unrecognized toolchain; may not be compatible";
     }
 
-    return def;
+    return applyRuntimeState(def);
 }
 
 bool CompilerRegistry::isImageCompatibleWithLanguage(const QString& imageName, Language lang) const {

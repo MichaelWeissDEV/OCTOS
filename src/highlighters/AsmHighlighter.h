@@ -4,6 +4,7 @@
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
+#include "../ui/Theme.h"
 #include <QVector>
 
 class AsmHighlighter : public QSyntaxHighlighter {
@@ -11,14 +12,19 @@ class AsmHighlighter : public QSyntaxHighlighter {
 
    public:
     explicit AsmHighlighter(QTextDocument *parent = nullptr);
+    // Re-reads the theme colors and rehighlights the document.
+    void applyTheme();
 
    protected:
     void highlightBlock(const QString &text) override;
 
    private:
+    void recolorFormats();
+    int m_themeGeneration{-1};
     struct HighlightingRule {
         QRegularExpression pattern;
         QTextCharFormat format;
+        SyntaxRole role{SyntaxRole::Keyword};
     };
 
     QVector<HighlightingRule> m_rules;

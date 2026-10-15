@@ -353,6 +353,7 @@ ProcessedAssemblyResult AssemblyTextProcessor::processAssembly(const QString& ra
             }
             previousBlank = true;
             filteredLines.append(QString());
+            result.rawToDisplay[idx + 1] = displayIndex;
             ++displayIndex;
             continue;
         }
@@ -360,6 +361,7 @@ ProcessedAssemblyResult AssemblyTextProcessor::processAssembly(const QString& ra
 
         processedLine.replace(QRegularExpression("\\s+$"), "");
         filteredLines.append(processedLine);
+        result.rawToDisplay[idx + 1] = displayIndex;
 
         if (currentSourceLine > 0 && isInstruction(processedLine)) {
             result.sourceToDisplay[currentSourceLine].append(displayIndex);

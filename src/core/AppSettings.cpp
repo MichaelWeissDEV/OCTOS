@@ -1,4 +1,5 @@
 #include "AppSettings.h"
+#include <QDir>
 #include <QThread>
 
 AppSettings& AppSettings::instance() {
@@ -6,7 +7,18 @@ AppSettings& AppSettings::instance() {
     return inst;
 }
 
-AppSettings::AppSettings() : m_settings("OCTOS", "OCTOS") {
+// OCTOS_SETTINGS_DIR redirects all settings into an INI file in that directory (portable setups,
+// and test runs that must never touch the user's real preferences). The (organization, application)
+// constructors always use the native store, so the format has to be passed explicitly.
+QSettings::Format octosSettingsFormat() {
+    const QString dir = qEnvironmentVariable("OCTOS_SETTINGS_DIR");
+    if (dir.isEmpty()) return QSettings::NativeFormat;
+    QDir().mkpath(dir);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir);
+    return QSettings::IniFormat;
+}
+
+AppSettings::AppSettings() : m_settings(octosSettingsFormat(), QSettings::UserScope, "OCTOS", "OCTOS") {
 }
 
 bool AppSettings::autoCompile() const {
@@ -51,6 +63,48 @@ int AppSettings::themeIndex() const {
 void AppSettings::setThemeIndex(int index) {
     if (index < 0) index = 0;
     m_settings.setValue("UI/ThemeIndex", index);
+}
+
+QStringList AppSettings::octosPulledImages() const {
+    return m_settings.value("Docker/OctosPulledImages").toStringList();
+}
+
+void AppSettings::addOctosPulledImage(const QString& image) {
+    QStringList l = octosPulledImages();
+    if (!l.contains(image)) { l << image; m_settings.setValue("Docker/OctosPulledImages", l); }
+}
+
+void AppSettings::removeOctosPulledImage(const QString& image) {
+    QStringList l = octosPulledImages();
+    if (l.removeAll(image) > 0) m_settings.setValue("Docker/OctosPulledImages", l);
+}
+
+QByteArray AppSettings::layoutBlob(const QString& name) const {
+    return m_settings.value("Layout/" + name).toByteArray();
+}
+
+void AppSettings::setLayoutBlob(const QString& name, const QByteArray& data) {
+    m_settings.setValue("Layout/" + name, data);
+}
+
+void AppSettings::clearLayout() {
+    m_settings.remove("Layout");
+}
+
+QByteArray AppSettings::compilerProfilesJson() const {
+    return m_settings.value("Profiles/Json").toByteArray();
+}
+
+void AppSettings::setCompilerProfilesJson(const QByteArray& json) {
+    m_settings.setValue("Profiles/Json", json);
+}
+
+QByteArray AppSettings::toolchainProbesJson() const {
+    return m_settings.value("Docker/ToolchainProbes").toByteArray();
+}
+
+void AppSettings::setToolchainProbesJson(const QByteArray& json) {
+    m_settings.setValue("Docker/ToolchainProbes", json);
 }
 
 QString AppSettings::dockerMemoryLimit() const {

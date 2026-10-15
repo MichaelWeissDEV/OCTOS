@@ -28,6 +28,9 @@ public:
                                     const QString& outputFileContent) const override;
 
     QVector<Diagnostic> parseDiagnostics(const QString& compilerOutput) const override;
+
+    /// Resolves Auto: Binary if the source declares a top-level `fn main`, otherwise Library.
+    static RustCrateType resolveCrateType(RustCrateType requested, const QString& sourceCode);
 };
 
 #endif // RUSTSTRATEGY_H

@@ -9,6 +9,8 @@
 
 #include "JobManager.h"
 #include "../core/CompilerRegistry.h"
+#include "../core/AppSettings.h"
+#include <QTimer>
 
 namespace {
 constexpr int kDockerStartTimeoutMs = 5000;
@@ -24,11 +26,27 @@ DockerCompilerManager::DockerCompilerManager(QObject* parent)
     connect(m_jobManager.get(), &JobManager::jobStateChanged, this,
             &DockerCompilerManager::onJobManagerStateChanged);
 
+    // Previously stored probe results (only trusted while the image ID still matches).
+    const QByteArray stored = AppSettings::instance().toolchainProbesJson();
+    if (!stored.isEmpty()) {
+        const QJsonDocument doc = QJsonDocument::fromJson(stored);
+        if (doc.isObject()) CompilerRegistry::instance().importProbes(doc.object());
+    }
+
     // Initial async connection and image query
     checkDockerConnectionAsync();
 }
 
 DockerCompilerManager::~DockerCompilerManager() {
+    // Outstanding async docker commands (image list, probe, rmi): stop them cleanly so no QProcess
+    // is destroyed while running and no callback fires into a half-destroyed manager.
+    const auto procs = findChildren<QProcess*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QProcess* p : procs) {
+        if (p == m_currentPullProcess) continue;
+        p->disconnect(this);
+        p->kill();
+        p->waitForFinished(kCleanupTimeoutMs);
+    }
     if (m_currentPullProcess) {
         m_currentPullProcess->kill();
         m_currentPullProcess->waitForFinished(kCleanupTimeoutMs);
@@ -40,6 +58,7 @@ void DockerCompilerManager::checkDockerConnectionAsync() {
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, proc](int exitCode, QProcess::ExitStatus status) {
         m_dockerAvailable = (exitCode == 0 && status == QProcess::NormalExit);
+        if (m_dockerAvailable) m_daemonArchitecture = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
         QString msg = m_dockerAvailable ? "Docker daemon is running and reachable."
                                         : "Cannot connect to Docker daemon. Is Docker installed and running?";
         emit dockerConnectionStatusChanged(m_dockerAvailable, msg);
@@ -49,7 +68,7 @@ void DockerCompilerManager::checkDockerConnectionAsync() {
         proc->deleteLater();
     });
 
-    proc->start("docker", QStringList() << "info");
+    proc->start("docker", QStringList() << "info" << "--format" << "{{.Architecture}}");
     if (!proc->waitForStarted(2000)) {
         m_dockerAvailable = false;
         emit dockerConnectionStatusChanged(false, "Failed to launch 'docker' command. Ensure Docker is in PATH.");
@@ -171,6 +190,8 @@ void DockerCompilerManager::pullImage(const QString& imageName) {
     }
 
     m_currentPullImage = imageName;
+    // Only an image that was NOT there before can be said to belong to OCTOS afterwards.
+    m_pullTargetWasInstalled = isImageInstalled(imageName);
 
     m_currentPullProcess = new QProcess(this);
     connect(m_currentPullProcess, &QProcess::readyReadStandardOutput, this,
@@ -230,6 +251,7 @@ void DockerCompilerManager::onPullProcessFinished(int exitCode, QProcess::ExitSt
     emit pullFinished(m_currentPullImage, success, message);
 
     if (success) {
+        if (!m_pullTargetWasInstalled) AppSettings::instance().addOctosPulledImage(m_currentPullImage);
         refreshInstalledImagesAsync();
     }
 
@@ -239,116 +261,149 @@ void DockerCompilerManager::onPullProcessFinished(int exitCode, QProcess::ExitSt
     }
 }
 
-void DockerCompilerManager::removeImage(const QString& imageName) {
-    // Security check: Only allow deleting OCTOS-managed compiler images!
-    if (!CompilerRegistry::instance().isOctosManagedImage(imageName)) {
-        emit imageRemoved(imageName, false, "Cannot remove unmanaged image: only OCTOS-verified compiler images can be deleted.");
+void DockerCompilerManager::runDockerAsync(const QStringList& args, int timeoutMs, DockerDone done) {
+    auto* proc = new QProcess(this);
+    auto* timer = new QTimer(proc);
+    timer->setSingleShot(true);
+    auto timedOut = std::make_shared<bool>(false);
+    auto finishedFlag = std::make_shared<bool>(false);
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [proc, done, timedOut, finishedFlag](int exitCode, QProcess::ExitStatus status) {
+        if (*finishedFlag) return;
+        *finishedFlag = true;
+        const int code = (status == QProcess::NormalExit) ? exitCode : -1;
+        done(code, QString::fromUtf8(proc->readAllStandardOutput()),
+             QString::fromUtf8(proc->readAllStandardError()), *timedOut);
+        proc->deleteLater();
+    });
+    connect(proc, &QProcess::errorOccurred, this,
+            [proc, done, finishedFlag](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart || *finishedFlag) return;
+        *finishedFlag = true;
+        done(-1, QString(), "Could not start the docker command. Is Docker installed and in PATH?", false);
+        proc->deleteLater();
+    });
+    connect(timer, &QTimer::timeout, proc, [proc, timedOut]() {
+        *timedOut = true;
+        proc->kill();
+    });
+    timer->start(timeoutMs);
+    proc->start("docker", args);
+}
+
+void DockerCompilerManager::removeImage(const QString& imageName, bool confirmedForeign) {
+    // Only images that look like compiler images can be handled here at all (never e.g. a database image).
+    if (!CompilerRegistry::instance().isKnownCompilerImageName(imageName)) {
+        emit imageRemoved(imageName, false, "Not a recognised compiler image; OCTOS will not delete it.");
+        return;
+    }
+    // An image OCTOS did not pull may belong to other projects: require the explicit foreign confirmation.
+    if (!isOwnedByOctos(imageName) && !confirmedForeign) {
+        emit imageRemoved(imageName, false,
+                          "This image was not downloaded by OCTOS and may be used by other projects. "
+                          "Deletion needs explicit confirmation.");
         return;
     }
 
-    auto* proc = new QProcess(this);
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, proc, imageName](int exitCode, QProcess::ExitStatus status) {
-        bool success = (exitCode == 0 && status == QProcess::NormalExit);
-        QString msg = success ? "Image removed successfully." : "Failed to remove image: " + QString::fromUtf8(proc->readAllStandardError());
+    runDockerAsync({"rmi", imageName}, 60000,
+                   [this, imageName](int exitCode, const QString&, const QString& err, bool timedOut) {
+        const bool success = exitCode == 0;
+        QString msg;
+        if (success) msg = "Image removed successfully.";
+        else if (timedOut) msg = "Removing the image timed out.";
+        else msg = "Failed to remove image: " + err.trimmed();   // e.g. "image is being used by a container"
+        if (success) AppSettings::instance().removeOctosPulledImage(imageName);
         emit imageRemoved(imageName, success, msg);
-        if (success) {
-            refreshInstalledImagesAsync();
-        }
-        proc->deleteLater();
+        if (success) refreshInstalledImagesAsync();
     });
-
-    proc->start("docker", QStringList() << "rmi" << imageName);
-    if (!proc->waitForStarted(2000)) {
-        emit imageRemoved(imageName, false, "Could not start docker rmi process.");
-        proc->deleteLater();
-    }
-}
-
-QVector<DockerImage> DockerCompilerManager::listInstalledImages() {
-    if (m_installedImages.isEmpty()) {
-        refreshInstalledImagesSync();
-    }
-    return m_installedImages;
 }
 
 void DockerCompilerManager::refreshInstalledImagesAsync() {
-    auto* proc = new QProcess(this);
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, proc](int exitCode, QProcess::ExitStatus status) {
-        if (exitCode == 0 && status == QProcess::NormalExit) {
-            QString output = QString::fromUtf8(proc->readAllStandardOutput());
-            QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    if (m_refreshInFlight) return;
+    m_refreshInFlight = true;
 
-            QVector<DockerImage> images;
-            for (const QString& line : lines) {
-                QStringList parts = line.split('|');
-                if (parts.size() != 2) continue;
-
-                QString fullName = parts[0];
-                if (CompilerRegistry::instance().isOctosManagedImage(fullName)) {
-                    DockerImage image;
-                    QStringList nameParts = fullName.split(':');
-                    if (nameParts.size() == 2) {
-                        image.registry = nameParts[0];
-                        image.tag = nameParts[1];
-                    }
-                    image.fullName = fullName;
-                    image.isInstalled = true;
-                    image.size = 0;
-                    images.append(image);
-                }
-            }
-            m_installedImages = images;
-            emit installedImagesRefreshed(m_installedImages);
+    runDockerAsync({"images", "--format", "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}"}, 15000,
+                   [this](int exitCode, const QString& out, const QString& err, bool timedOut) {
+        m_refreshInFlight = false;
+        if (exitCode != 0) {
+            // A failed query must not look like "no images installed": keep the old list, report the error.
+            emit installedImagesRefreshFailed(timedOut ? QString("Querying Docker images timed out.")
+                                                       : QString("Could not list Docker images: ") + err.trimmed());
+            return;
         }
-        proc->deleteLater();
-    });
-
-    proc->start("docker", QStringList() << "images" << "--format" << "{{.Repository}}:{{.Tag}}|{{.Size}}");
-    if (!proc->waitForStarted(2000)) {
-        proc->deleteLater();
-    }
-}
-
-void DockerCompilerManager::refreshInstalledImagesSync() {
-    m_installedImages.clear();
-
-    QProcess process;
-    process.start("docker", QStringList() << "images" << "--format" << "{{.Repository}}:{{.Tag}}|{{.Size}}");
-    if (!process.waitForFinished(1000)) {
-        return;
-    }
-
-    QString output = QString::fromUtf8(process.readAllStandardOutput());
-    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-
-    for (const QString& line : lines) {
-        QStringList parts = line.split('|');
-        if (parts.size() != 2) continue;
-
-        QString fullName = parts[0];
-        if (CompilerRegistry::instance().isOctosManagedImage(fullName)) {
+        QVector<DockerImage> images;
+        auto& registry = CompilerRegistry::instance();
+        for (const DockerImage& old : std::as_const(m_installedImages)) registry.setInstalledImageId(old.fullName, QString());
+        for (const QString& line : out.split('\n', Qt::SkipEmptyParts)) {
+            const QStringList parts = line.split('|');
+            if (parts.size() != 3) continue;
+            const QString fullName = parts[0];
+            if (!registry.isKnownCompilerImageName(fullName)) continue;
             DockerImage image;
-            QStringList nameParts = fullName.split(':');
-            if (nameParts.size() == 2) {
-                image.registry = nameParts[0];
-                image.tag = nameParts[1];
-            }
+            const QStringList nameParts = fullName.split(':');
+            if (nameParts.size() == 2) { image.registry = nameParts[0]; image.tag = nameParts[1]; }
             image.fullName = fullName;
+            image.imageId = parts[1];
             image.isInstalled = true;
-            image.size = 0;
-
-            m_installedImages.append(image);
+            images.append(image);
+            registry.setInstalledImageId(fullName, image.imageId);
         }
-    }
+        m_installedImages = images;
+        emit installedImagesRefreshed(m_installedImages);
+    });
 }
 
-bool DockerCompilerManager::isImageInstalled(const QString& imageName) {
+bool DockerCompilerManager::isImageInstalled(const QString& imageName) const {
     for (const auto& img : m_installedImages) {
         if (img.fullName == imageName) return true;
     }
     return false;
+}
+
+bool DockerCompilerManager::isOwnedByOctos(const QString& imageName) const {
+    return AppSettings::instance().octosPulledImages().contains(imageName);
+}
+
+void DockerCompilerManager::persistProbes() {
+    AppSettings::instance().setToolchainProbesJson(
+        QJsonDocument(CompilerRegistry::instance().exportProbes()).toJson(QJsonDocument::Compact));
+}
+
+void DockerCompilerManager::probeToolchain(const QString& imageName) {
+    const CompilerDefinition def = CompilerRegistry::instance().compilerForImage(imageName);
+
+    auto fail = [this, imageName](const QString& msg, const QString& digest) {
+        ToolchainProbeResult r;
+        r.performed = true;
+        r.success = false;
+        r.checkedAt = QDateTime::currentDateTimeUtc();
+        r.imageDigest = digest;
+        r.message = msg;
+        CompilerRegistry::instance().recordProbeResult(imageName, r);
+        persistProbes();
+        emit toolchainProbed(imageName, r);
+    };
+
+    // Step 1: which image exactly are we about to probe? (never pulls)
+    runDockerAsync({"image", "inspect", "--format", "{{.Id}}", imageName}, 15000,
+                   [this, imageName, def, fail](int exitCode, const QString& out, const QString& err, bool) {
+        if (exitCode != 0) {
+            fail("Image is not available locally: " + err.trimmed(), QString());
+            return;
+        }
+        const QString digest = out.trimmed();
+        // Step 2: run the probe in a locked-down container.
+        runDockerAsync(ToolchainProbe::buildDockerArgs(imageName, def), 60000,
+                       [this, imageName, def, digest, fail](int code, const QString& pout, const QString& perr, bool timedOut) {
+            if (timedOut) { fail("The probe timed out.", digest); return; }
+            ToolchainProbeResult r = ToolchainProbe::parseOutput(def, code, pout, perr, digest);
+            CompilerRegistry::instance().recordProbeResult(imageName, r);
+            CompilerRegistry::instance().setInstalledImageId(imageName, digest);
+            persistProbes();
+            emit toolchainProbed(imageName, r);
+        });
+    });
 }
 
 int DockerCompilerManager::submitCompilationJob(const QString& sourceCode,

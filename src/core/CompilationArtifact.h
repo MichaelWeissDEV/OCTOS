@@ -1,6 +1,8 @@
 #ifndef COMPILATIONARTIFACT_H
 #define COMPILATIONARTIFACT_H
 
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QMap>
 #include <QMetaType>
 #include <QString>
@@ -32,14 +34,48 @@ inline QString artifactTypeToString(ArtifactType type) {
     return "Unknown";
 }
 
+// Where the bytes of an artifact live. A host temp path is only valid while the
+// compilation sandbox exists and must never be offered as a usable file path.
+enum class ArtifactStorage {
+    InMemory,        // `content` holds the data (default; always valid)
+    PersistentFile   // `persistentPath` holds a durable copy
+};
+
 struct CompilationArtifact {
+    QString id;                       // stable within a result: "<compilationId>:<index>:<type>"
     ArtifactType type{ArtifactType::Other};
-    QString name;
+    QString name;                     // display name
     QString content;
     qint64 sizeBytes{0};
     QString mimeType{"text/plain"};
-    QString originPath;
     QMap<QString, QString> metadata;
+
+    // Provenance
+    QString source;                   // e.g. "g++ -S output file" or "compiler stderr"
+    QString compilerProfile;          // profile / flags it was produced with
+    quint64 compilationId{0};         // job id of the producing compilation
+    QDateTime createdAt;
+    QString checksumSha256;           // hex digest of the UTF-8 content, optional
+    bool truncated{false};            // content is incomplete
+
+    // Lifecycle: these paths are distinct on purpose.
+    QString containerPath;            // path inside the container (informational only)
+    QString hostTempPath;             // transient host path; invalid once the sandbox is deleted
+    QString persistentPath;           // durable copy, empty unless explicitly saved
+    ArtifactStorage storage{ArtifactStorage::InMemory};
+
+    bool hasPersistentFile() const {
+        return storage == ArtifactStorage::PersistentFile && !persistentPath.isEmpty();
+    }
+
+    // Writes the content to `path` atomically and records it as the durable copy. Only an explicit
+    // save ever sets persistentPath; the sandbox directory the compiler used no longer exists.
+    bool saveTo(const QString& path, QString* errorMsg = nullptr);
+
+    void computeChecksum() {
+        checksumSha256 = QString::fromLatin1(
+            QCryptographicHash::hash(content.toUtf8(), QCryptographicHash::Sha256).toHex());
+    }
 };
 
 Q_DECLARE_METATYPE(ArtifactType);

@@ -10,10 +10,13 @@ QStringList AdaStrategy::buildCompilerArgs(const CompilationRequest& req,
     args << "-c";
     args << "-S";
 
-    if (req.syntaxFlavor == SyntaxFlavor::Intel) {
-        args << "-masm=intel";
-    } else {
-        args << "-masm=att";
+    // -masm= exists only on x86 targets (GCC rejects it on aarch64).
+    if (req.targetsX86()) {
+        if (req.syntaxFlavor == SyntaxFlavor::Intel) {
+            args << "-masm=intel";
+        } else {
+            args << "-masm=att";
+        }
     }
 
     QStringList userFlags = StrategyUtils::splitCompilerArguments(req.userArgs);

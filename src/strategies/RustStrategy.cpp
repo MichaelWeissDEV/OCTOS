@@ -2,45 +2,86 @@
 #include "StrategyUtils.h"
 #include <QRegularExpression>
 
+RustCrateType RustStrategy::resolveCrateType(RustCrateType requested, const QString& sourceCode) {
+    if (requested != RustCrateType::Auto) return requested;
+    // `fn main(` not preceded by an identifier character (so `fn domain(` does not count).
+    static const QRegularExpression mainRe(R"((?<![A-Za-z0-9_])fn\s+main\s*\()");
+    return mainRe.match(sourceCode).hasMatch() ? RustCrateType::Binary : RustCrateType::Library;
+}
+
 QStringList RustStrategy::buildCompilerArgs(const CompilationRequest& req,
                                             const QString& inputFilePath,
                                             const QString& outputDirPath) const {
     QStringList args;
     args << defaultCompilerBinary(req.compilerImage);
 
-    // Assembly output for rustc
-    args << "--emit=asm";
+    const QStringList sanitized = sanitizeUserFlags(StrategyUtils::splitCompilerArguments(req.userArgs));
 
-    // Syntax flavor via LLVM args
-    if (req.syntaxFlavor == SyntaxFlavor::Intel) {
-        args << "-C" << "llvm-args=--x86-asm-syntax=intel";
-    } else {
-        args << "-C" << "llvm-args=--x86-asm-syntax=att";
-    }
-
-    // Parse and sanitize user flags (removes GCC-specific flags!)
-    QStringList rawFlags = StrategyUtils::splitCompilerArguments(req.userArgs);
-    QStringList sanitized = sanitizeUserFlags(rawFlags);
-
-    // Check if debuginfo is already specified
+    // Fold the user's flags into one value per setting so nothing is passed twice or contradictorily.
+    QString userCrateType;
+    QString userEdition;
+    QString optLevel;          // from -O or -C opt-level=; the last one wins
     bool hasDebug = false;
-    for (const QString& flag : sanitized) {
-        if (flag == "-g" || flag.startsWith("-Cdebuginfo") || flag.startsWith("-C debuginfo")) {
-            hasDebug = true;
-            break;
+    QStringList passthrough;
+
+    for (int i = 0; i < sanitized.size(); ++i) {
+        const QString& f = sanitized[i];
+        // A flag's separate value must not itself look like a flag ("--crate-type -O" is a dangling
+        // flag followed by -O, not a crate type called "-O").
+        auto nextValue = [&](QString* out) {
+            if (i + 1 < sanitized.size() && !sanitized[i + 1].startsWith('-')) { *out = sanitized[++i]; return true; }
+            return false;
+        };
+        if (f == "--crate-type") { nextValue(&userCrateType); continue; }
+        if (f.startsWith("--crate-type=")) { userCrateType = f.mid(13); continue; }
+        if (f == "--edition") { nextValue(&userEdition); continue; }
+        if (f.startsWith("--edition=")) { userEdition = f.mid(10); continue; }
+        if (f == "--emit" || f.startsWith("--emit=")) {   // the output artifact is always assembly
+            if (f == "--emit") { QString ignored; nextValue(&ignored); }
+            continue;
         }
-    }
-    if (!hasDebug) {
-        args << "-g";
+        if (f == "-O") { optLevel = "2"; continue; }
+        if (f == "-C") {
+            QString v;
+            if (nextValue(&v)) {
+                if (v.startsWith("opt-level=")) { optLevel = v.mid(10); continue; }
+                if (v.startsWith("debuginfo")) { hasDebug = true; }
+                passthrough << "-C" << v;
+            }
+            continue;
+        }
+        if (f.startsWith("-Copt-level=")) { optLevel = f.mid(12); continue; }
+        if (f.startsWith("-Cdebuginfo")) { hasDebug = true; passthrough << f; continue; }
+        if (f == "-g") { hasDebug = true; continue; }
+        passthrough << f;
     }
 
-    args.append(sanitized);
+    // Crate type: an explicit user choice wins over the request, which wins over auto-detection.
+    QString crateType = userCrateType;
+    if (crateType.isEmpty()) {
+        crateType = resolveCrateType(req.rustCrateType, req.sourceCode) == RustCrateType::Library ? "lib" : "bin";
+    }
+    args << ("--crate-type=" + crateType);
+    args << "--emit=asm";
+    args << "--crate-name" << "octos_snippet";   // fixed name: independent of the file name, reproducible
+    args << ("--edition=" + (userEdition.isEmpty() ? QString("2021") : userEdition));
+    args << "-C" << "codegen-units=1";            // deterministic single assembly unit
 
-    // Input and output
+    if (!optLevel.isEmpty()) args << "-C" << ("opt-level=" + optLevel);
+
+    // Syntax flavor via LLVM args (x86 targets only; other targets ignore it)
+    if (req.targetsX86()) {
+        args << "-C" << (req.syntaxFlavor == SyntaxFlavor::Intel ? "llvm-args=--x86-asm-syntax=intel"
+                                                                 : "llvm-args=--x86-asm-syntax=att");
+    }
+
+    // Debug info drives the source mapping (.loc); `-g` is added unless the user chose a level.
+    if (!hasDebug) args << "-g";
+    args.append(passthrough);
+
     args << inputFilePath;
     args << "-o";
     args << (outputDirPath + "/output.s");
-
     return args;
 }
 

@@ -1,4 +1,5 @@
 #include "CompilerManagerDialog.h"
+#include "Theme.h"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -37,6 +38,10 @@ CompilerManagerDialog::CompilerManagerDialog(DockerCompilerManager* dockerManage
             &CompilerManagerDialog::onInstalledImagesRefreshed);
     connect(m_dockerManager, &DockerCompilerManager::imageRemoved, this,
             &CompilerManagerDialog::onImageRemoved);
+    connect(m_dockerManager, &DockerCompilerManager::installedImagesRefreshFailed, this,
+            &CompilerManagerDialog::onInstalledImagesRefreshFailed);
+    connect(m_dockerManager, &DockerCompilerManager::toolchainProbed, this,
+            &CompilerManagerDialog::onToolchainProbed);
 
     populateCategories();
 
@@ -51,7 +56,7 @@ void CompilerManagerDialog::setupUi() {
 
     // Docker Status Banner
     m_dockerStatusBanner = new QLabel(this);
-    m_dockerStatusBanner->setStyleSheet("padding: 8px 12px; font-weight: bold; font-size: 12px; background-color: #2d2d30; color: #cccccc; border-bottom: 1px solid #3e3e42;");
+    Theme::setRole(m_dockerStatusBanner, "toolbar");
     m_dockerStatusBanner->setText("Checking Docker daemon status...");
     mainLayout->addWidget(m_dockerStatusBanner);
 
@@ -62,27 +67,11 @@ void CompilerManagerDialog::setupUi() {
     leftLayout->setContentsMargins(8, 8, 8, 8);
 
     QLabel* categoryLabel = new QLabel("Toolchains & Languages");
-    categoryLabel->setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px; color: #4fc1ff;");
+    Theme::setRole(categoryLabel, "title");
 
     m_categoryList = new QListWidget();
     m_categoryList->setMaximumWidth(210);
-    m_categoryList->setStyleSheet(R"(
-        QListWidget {
-            background-color: #252526;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
-        }
-        QListWidget::item {
-            padding: 8px;
-            border-bottom: 1px solid #3e3e42;
-        }
-        QListWidget::item:selected {
-            background-color: #094771;
-        }
-        QListWidget::item:hover {
-            background-color: #2a2d2e;
-        }
-    )");
+
 
     leftLayout->addWidget(categoryLabel);
     leftLayout->addWidget(m_categoryList);
@@ -97,33 +86,10 @@ void CompilerManagerDialog::setupUi() {
     QHBoxLayout* searchLayout = new QHBoxLayout();
     m_searchBox = new QLineEdit();
     m_searchBox->setPlaceholderText("Search compiler versions...");
-    m_searchBox->setStyleSheet(R"(
-        QLineEdit {
-            padding: 6px;
-            background-color: #3c3c3c;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
-            color: #cccccc;
-        }
-    )");
+
 
     m_refreshButton = new QPushButton("Refresh Local Images");
-    m_refreshButton->setStyleSheet(R"(
-        QPushButton {
-            padding: 6px 16px;
-            background-color: #0e639c;
-            border: none;
-            border-radius: 4px;
-            color: white;
-            font-weight: bold;
-        }
-        QPushButton:hover {
-            background-color: #1177bb;
-        }
-        QPushButton:pressed {
-            background-color: #0d5a8f;
-        }
-    )");
+    Theme::setRole(m_refreshButton, "subtle");
 
     connect(m_searchBox, &QLineEdit::textChanged, this,
             &CompilerManagerDialog::onSearchTextChanged);
@@ -147,46 +113,16 @@ void CompilerManagerDialog::setupUi() {
     m_imageTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_imageTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_imageTable->verticalHeader()->setDefaultSectionSize(32);
-    m_imageTable->setStyleSheet(R"(
-        QTableWidget {
-            background-color: #1e1e1e;
-            border: 1px solid #3e3e42;
-            gridline-color: #3e3e42;
-        }
-        QTableWidget::item {
-            padding: 6px;
-        }
-        QTableWidget::item:selected {
-            background-color: #094771;
-        }
-        QHeaderView::section {
-            background-color: #2d2d30;
-            padding: 6px;
-            border: none;
-            border-bottom: 1px solid #3e3e42;
-            font-weight: bold;
-        }
-    )");
+
 
     QHBoxLayout* statusLayout = new QHBoxLayout();
     m_statusLabel = new QLabel("Select a toolchain category to view compilers");
-    m_statusLabel->setStyleSheet("padding: 4px; color: #cccccc;");
+    Theme::setRole(m_statusLabel, "muted");
 
     m_progressBar = new QProgressBar();
     m_progressBar->setVisible(false);
     m_progressBar->setMaximumWidth(300);
-    m_progressBar->setStyleSheet(R"(
-        QProgressBar {
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
-            text-align: center;
-            background-color: #252526;
-        }
-        QProgressBar::chunk {
-            background-color: #0e639c;
-            border-radius: 3px;
-        }
-    )");
+
 
     statusLayout->addWidget(m_statusLabel);
     statusLayout->addStretch();
@@ -207,19 +143,7 @@ void CompilerManagerDialog::setupUi() {
     buttonLayout->setContentsMargins(8, 8, 8, 8);
 
     QPushButton* closeButton = new QPushButton("Close");
-    closeButton->setStyleSheet(R"(
-        QPushButton {
-            padding: 6px 20px;
-            background-color: #3c3c3c;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
-            color: white;
-            font-weight: bold;
-        }
-        QPushButton:hover {
-            background-color: #505050;
-        }
-    )");
+    Theme::setRole(closeButton, "accent");
     connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
 
     buttonLayout->addStretch();
@@ -229,10 +153,10 @@ void CompilerManagerDialog::setupUi() {
 
 void CompilerManagerDialog::onDockerConnectionStatusChanged(bool available, const QString& message) {
     if (available) {
-        m_dockerStatusBanner->setStyleSheet("padding: 8px 12px; font-weight: bold; font-size: 12px; background-color: #1e3a24; color: #4ec9b0; border-bottom: 1px solid #2e5a34;");
+        Theme::setRole(m_dockerStatusBanner, "noticeOk");
         m_dockerStatusBanner->setText("● Docker Connected: " + message);
     } else {
-        m_dockerStatusBanner->setStyleSheet("padding: 8px 12px; font-weight: bold; font-size: 12px; background-color: #3a1e1e; color: #f48771; border-bottom: 1px solid #5a2e2e;");
+        Theme::setRole(m_dockerStatusBanner, "noticeError");
         m_dockerStatusBanner->setText("● Docker Offline: " + message + " (Local compilation requires running Docker daemon)");
     }
 }
@@ -316,13 +240,34 @@ void CompilerManagerDialog::updateImageTable(const QVector<DockerImage>& images)
         CompilerDefinition def = CompilerRegistry::instance().compilerForImage(image.fullName);
         auto* itemFamily = new QTableWidgetItem(compilerFamilyToString(def.family));
 
-        QString compatStr = def.isExperimental ? "Experimental" : "Verified";
+        // "Verified" only after a probe ran inside the image; a known image name or plausible
+        // metadata is shown for what it is.
+        const VerificationState vstate = def.verificationState();
+        QString compatStr = verificationStateToString(vstate);
+        if (vstate == VerificationState::Verified && !def.actualVersion().isEmpty())
+            compatStr += " – " + def.actualVersion().left(40);
         auto* itemCompat = new QTableWidgetItem(compatStr);
-        if (def.isExperimental) {
-            itemCompat->setForeground(QColor("#ffd700"));
-        } else {
-            itemCompat->setForeground(QColor("#4ec9b0"));
+        QString tip;
+        switch (vstate) {
+            case VerificationState::Verified:
+                tip = QString("Checked %1 inside the image.").arg(def.probe.checkedAt.toLocalTime().toString());
+                itemCompat->setForeground(Theme::currentTokens().success);
+                break;
+            case VerificationState::VerificationFailed:
+                tip = def.probe.message;
+                itemCompat->setForeground(Theme::currentTokens().error);
+                break;
+            case VerificationState::ToolchainPlausible:
+                tip = "Image name and metadata suggest a usable toolchain. Not checked yet - use 'Verify'.";
+                itemCompat->setForeground(Theme::currentTokens().warning);
+                break;
+            case VerificationState::ImageRecognized:
+                tip = "Image name recognised. Its contents were not checked.";
+                itemCompat->setForeground(Theme::currentTokens().textMuted);
+                break;
         }
+        if (def.isExperimental && !def.statusMessage.isEmpty()) tip += "\n" + def.statusMessage;
+        itemCompat->setToolTip(tip);
 
         m_imageTable->setItem(row, 0, itemTag);
         m_imageTable->setItem(row, 1, itemFamily);
@@ -339,40 +284,12 @@ void CompilerManagerDialog::updateImageTable(const QVector<DockerImage>& images)
 
         if (isInstalled) {
             actionButton->setText("Delete");
-            actionButton->setStyleSheet(R"(
-                QPushButton {
-                    padding: 3px 8px;
-                    min-width: 80px;
-                    background-color: #8c2020;
-                    border: none;
-                    border-radius: 3px;
-                    color: white;
-                    font-size: 11px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #aa2828;
-                }
-            )");
+            Theme::setRole(actionButton, "danger");
             connect(actionButton, &QPushButton::clicked, this,
                     &CompilerManagerDialog::onDeleteClicked);
         } else {
             actionButton->setText("Download");
-            actionButton->setStyleSheet(R"(
-                QPushButton {
-                    padding: 3px 8px;
-                    min-width: 80px;
-                    background-color: #0e639c;
-                    border: none;
-                    border-radius: 3px;
-                    color: white;
-                    font-size: 11px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #1177bb;
-                }
-            )");
+            Theme::setRole(actionButton, "accent");
             connect(actionButton, &QPushButton::clicked, this,
                     &CompilerManagerDialog::onDownloadClicked);
         }
@@ -381,6 +298,13 @@ void CompilerManagerDialog::updateImageTable(const QVector<DockerImage>& images)
         actionButton->setProperty("row", row);
 
         statusLayout->addWidget(actionButton);
+        if (isInstalled) {
+            auto* verifyButton = new QPushButton("Verify");
+            verifyButton->setToolTip("Run a tool check inside the image (no network, nothing is downloaded)");
+            verifyButton->setProperty("imageName", image.fullName);
+            connect(verifyButton, &QPushButton::clicked, this, &CompilerManagerDialog::onVerifyClicked);
+            statusLayout->addWidget(verifyButton);
+        }
         statusLayout->addStretch();
 
         m_imageTable->setCellWidget(row, 4, statusWidget);
@@ -437,27 +361,53 @@ void CompilerManagerDialog::onDeleteClicked() {
     QPushButton* button = qobject_cast<QPushButton*>(sender());
     if (!button) return;
 
-    QString imageName = button->property("imageName").toString();
+    const QString imageName = button->property("imageName").toString();
 
-    // Verify it's an OCTOS-managed image
-    if (!CompilerRegistry::instance().isOctosManagedImage(imageName)) {
+    if (!CompilerRegistry::instance().isKnownCompilerImageName(imageName)) {
         QMessageBox::warning(this, "Cannot Delete",
-                             "Safety check failed: image '" + imageName +
-                             "' is not managed by OCTOS. Only OCTOS compiler images can be deleted.");
+                             "Image '" + imageName + "' is not a recognised compiler image. "
+                             "OCTOS only offers to delete compiler images.");
         return;
     }
 
-    // Explicit user confirmation requirement!
+    // Deletion is always an explicit decision. Images OCTOS did not download may be used elsewhere.
+    const bool owned = m_dockerManager->isOwnedByOctos(imageName);
+    QString text = QString("Delete the local Docker image '%1'?\nThis action cannot be undone.").arg(imageName);
+    if (!owned) {
+        text = QString("The image '%1' was NOT downloaded by OCTOS.\n\nIt was already on this machine and "
+                       "may be used by other projects or containers. Deleting it can break them.\n\n"
+                       "Delete it anyway?").arg(imageName);
+    }
     QMessageBox::StandardButton reply = QMessageBox::question(
-        this, "Delete Compiler Image",
-        QString("Are you sure you want to delete the local Docker image '%1'?\nThis action cannot be undone.")
-            .arg(imageName),
-        QMessageBox::Yes | QMessageBox::No);
+        this, owned ? "Delete Compiler Image" : "Delete Image Not Managed by OCTOS", text,
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
-        m_dockerManager->removeImage(imageName);
+        m_dockerManager->removeImage(imageName, !owned);
         m_statusLabel->setText("Removing " + imageName + "...");
     }
+}
+
+void CompilerManagerDialog::onVerifyClicked() {
+    QPushButton* button = qobject_cast<QPushButton*>(sender());
+    if (!button) return;
+    const QString imageName = button->property("imageName").toString();
+    button->setEnabled(false);
+    button->setText("Verifying...");
+    m_statusLabel->setText("Checking the toolchain inside " + imageName + "...");
+    m_dockerManager->probeToolchain(imageName);
+}
+
+void CompilerManagerDialog::onToolchainProbed(const QString& imageName, const ToolchainProbeResult& result) {
+    m_statusLabel->setText(result.success
+        ? QString("%1: toolchain verified (%2)").arg(imageName, result.version)
+        : QString("%1: verification failed - %2").arg(imageName, result.message));
+    updateImageTable();
+}
+
+void CompilerManagerDialog::onInstalledImagesRefreshFailed(const QString& message) {
+    // A failed query is shown as an error, not silently treated as "no images".
+    m_statusLabel->setText(message);
 }
 
 void CompilerManagerDialog::onRefreshClicked() {

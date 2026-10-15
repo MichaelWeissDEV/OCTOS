@@ -21,7 +21,8 @@ struct FilterSettings {
 
 struct ProcessedAssemblyResult {
     QString filteredText;
-    QMap<int, QVector<int>> sourceToDisplay;
+    QMap<int, QVector<int>> sourceToDisplay;   // source line (from .loc) -> display lines (0-based)
+    QMap<int, int> rawToDisplay;               // raw assembly line (1-based) -> display line (0-based); filtered-out lines are absent
 };
 
 class AssemblyTextProcessor {

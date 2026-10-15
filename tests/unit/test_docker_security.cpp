@@ -1,3 +1,4 @@
+#include "../TestSupport.h"
 #include <QTest>
 #include <QFile>
 #include <QTemporaryDir>
@@ -169,5 +170,5 @@ void TestDockerSecurity::testRunAsUserArg() {
     QCOMPARE(dockerArgs[userIdx + 1], QString("1001:1001"));
 }
 
-QTEST_MAIN(TestDockerSecurity)
+OCTOS_TEST_MAIN(TestDockerSecurity)
 #include "test_docker_security.moc"

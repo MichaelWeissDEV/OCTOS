@@ -39,15 +39,15 @@ QStringList JavaStrategy::buildCompilerArgs(const CompilationRequest& req,
     // We run javac, then javap on all generated .class files in /output
     // Note: Parameterized via $1 (outputDir), $2 (inputFilePath), $3 (className)
     // to strictly prevent command injection
+    // javac may place classes in package directories and emit inner/secondary classes
+    // (Outer$Inner.class, other top-level classes), so disassemble every generated class file.
+    // Paths are passed as positional parameters ($1 outputDir, $2 inputFile, $3 className) and
+    // never interpolated, which prevents command injection.
     const char* script =
-        "javac -d \"$1\" -g \"$2\" && "
-        "if [ -f \"$1/$3.class\" ]; then "
-        "  javap -c -v -p \"$1/$3.class\"; "
-        "else "
-        "  for f in \"$1\"/*.class; do "
-        "    if [ -f \"$f\" ]; then javap -c -v -p \"$f\"; fi; "
-        "  done; "
-        "fi";
+        "javac -d \"$1\" -g \"$2\" || exit $?; "
+        "find \"$1\" -name '*.class' | sort | while IFS= read -r f; do "
+        "  javap -c -v -p \"$f\" || exit 1; "
+        "done";
 
     args << script;
     args << "octos_java";
