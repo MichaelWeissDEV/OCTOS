@@ -61,6 +61,9 @@ released**; this section only records what changed in the working tree.
 - **Theme tokens:** every widget takes its colours from the theme (no hard-coded dark colours); contrast is
   tested for all six themes. Dockable layout persisted between sessions, *Reset Layout*.
 
+- **LLVM IR output** for Clang and Rust (`Output` selector in the pane, profile field); GCC falls back to assembly.
+- AArch64 parsing, active target/profile menus, project profile editor, *Compile Now* (F5).
+
 ### Tests & tooling
 - Test runs are **isolated from the user's preferences** (`OCTOS_SETTINGS_DIR`, `OCTOS_TEST_MAIN`).
 - ThreadSanitizer runs without suppressions (explicit hand-off annotations, mutex-protected result inbox).

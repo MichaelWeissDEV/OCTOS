@@ -27,8 +27,7 @@ coarse diff, never a silent wrong one. See [Diff Viewer](user-guide/diff-viewer.
 
 **Are "fewer instructions" faster?** Not necessarily. The statistics describe the listing only.
 
-**Is LLVM IR supported?** The data model, viewer and highlighter exist; the current strategies do not emit IR
-yet ([Roadmap](https://github.com/MichaelWeissDEV/OCTOS/blob/main/ROADMAP.md)).
+**Is LLVM IR supported?** Yes for Clang and Rust: set the pane's **Output** to *LLVM IR* ([Artifacts](user-guide/artifacts.md#choosing-assembly-or-llvm-ir)). GCC cannot produce IR.
 
 **Which architectures can the analysis read?** x86-64 and AArch64 GNU assembler output.
 

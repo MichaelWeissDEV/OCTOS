@@ -27,6 +27,7 @@ struct CompilationRequest {
         return a.isEmpty() || a.contains("x86") || a.contains("amd64") || a.contains("i386") || a.contains("i686");
     }
     QString mainFilePath;   // project-relative path of the main source (used to derive include directories)
+    OutputKind outputKind{OutputKind::Assembly};   // honoured only if the strategy supports it
     RustCrateType rustCrateType{RustCrateType::Auto}; // only used for Language::Rust
     int timeoutMs{30000};
 };

@@ -56,6 +56,10 @@ public:
     void setSelectedCompiler(const QString& compilerName);
     void setLanguage(Language lang);
     void setCompilerFlags(const QString& flags);
+    // Assembly or LLVM IR. LLVM IR is only offered for Clang images and Rust; otherwise the pane is forced to Assembly.
+    OutputKind getOutputKind() const;
+    void setOutputKind(OutputKind kind);
+    bool outputKindSelectable() const { return m_outputCombo && m_outputCombo->isEnabled(); }
     void setSyntaxFlavor(SyntaxFlavor flavor);
     bool hasCompiler(const QString& compilerName) const;
 
@@ -82,6 +86,7 @@ signals:
     void flagsChanged(const QString& flags);
     void languageChanged(Language lang);
     void syntaxChanged(SyntaxFlavor flavor);
+    void outputKindChanged(OutputKind kind);
     void cancelRequested();
     // The user picked another artifact in the selector.
     void artifactSelectionChanged();
@@ -107,6 +112,7 @@ private:
     QComboBox* m_languageCombo;
     QComboBox* m_syntaxCombo;
     QComboBox* m_compilerCombo;
+    QComboBox* m_outputCombo{nullptr};
     QLineEdit* m_flagsInput;
     QLabel* m_titleLabel;
     QLabel* m_statusLabel;

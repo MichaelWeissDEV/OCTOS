@@ -13,6 +13,8 @@ public:
     QString defaultCompilerBinary(const QString& dockerImage) const override;
     QString sourceFileName(const QString& sourceCode) const override;
     QString outputFileName() const override;
+    QString outputFileFor(const CompilationRequest& req) const override;
+    bool supportsOutputKind(OutputKind kind, const CompilationRequest& req) const override;
 
     QStringList buildCompilerArgs(const CompilationRequest& req,
                                   const QString& inputFilePath,

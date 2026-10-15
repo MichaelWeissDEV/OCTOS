@@ -18,7 +18,7 @@ This document outlines the planned future work for OCTOS.
 - [x] Core models (`WorkspaceModel`, `AssemblyParser`, `CompilationArtifact`) implemented in `octos_core`
 - [x] Multi-file workspace UI (project explorer, editor tabs, per-file dirty state, profiles). Open: target selection UI, CMake/Makefile generation
 - [x] CFG data (functions, blocks, edges) and analysis panel for x86-64 and AArch64. Open: graphical CFG visualizer
-- [ ] LLVM IR extraction and viewer alongside assembly output
+- [x] LLVM IR output (Clang, Rust) with viewer and highlighter
 - [ ] Complete integration and verification of Ada GNAT and C# Mono container pipelines
 
 ### Version 0.6.0 (Packaging & Platform Polish)

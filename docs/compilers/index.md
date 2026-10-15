@@ -9,8 +9,8 @@ compiler invocation and turns the output back into a structured result
 | Language | Level | Artifact | Images | Output file / source |
 | --- | --- | --- | --- | --- |
 | C / C++ (GCC) | Supported | assembly | `gcc:<tag>` | `/output/output.s` ← `/input/source.c(pp)` |
-| C / C++ (Clang) | Supported | assembly | `silkeh/clang:<tag>`, any image whose name contains `clang` | same |
-| Rust | Supported | assembly | `rust:<tag>` | `/output/output.s` ← `/input/source.rs` |
+| C / C++ (Clang) | Supported | assembly, **LLVM IR** | `silkeh/clang:<tag>`, any image whose name contains `clang` | same |
+| Rust | Supported | assembly, **LLVM IR** | `rust:<tag>` | `/output/output.s` ← `/input/source.rs` |
 | Java | Supported | JVM bytecode | `eclipse-temurin:<tag>`, `openjdk:<tag>` | stdout of `javap`, classes in `/output` |
 | Python | Supported | CPython bytecode (`dis`) | `python:<tag>` | stdout; `/output/source.pyc` |
 | C# | Experimental | CIL | `mono:<tag>` | stdout of `monodis` |
@@ -37,6 +37,7 @@ g++|gcc|clang++|clang  -S  -fno-asynchronous-unwind-tables  [-masm=intel|att]  [
 * `-g` is added unless you pass any `-g…` flag; it produces the `.loc` lines used for source mapping.
 * The `-I` flags appear only in [project mode](../user-guide/projects.md) when extra files exist.
 * Clang vs GCC is chosen by the image name (`clang` anywhere in it → Clang).
+* **LLVM IR (Clang only):** with *Output = LLVM IR* the command becomes `clang++ -S -emit-llvm -fno-asynchronous-unwind-tables -g <flags> … -o /output/output.ll` (no `-masm`). GCC has no IR output and falls back to assembly.
 * Diagnostics: `file:line:col: error|warning|note: message`.
 
 Flags that OCTOS removes: output-related (`-o`, `-c`, `--output…`), anything with shell metacharacters.
@@ -59,6 +60,7 @@ rustc  --crate-type=<lib|bin>  --emit=asm  --crate-name octos_snippet  --edition
 * `codegen-units=1` and a fixed crate name make the output deterministic.
 * The x86 syntax option is passed only for x86 targets.
 * A flag's separate value never swallows a following flag (`--crate-type -O` is a dangling flag plus `-O`).
+* **LLVM IR:** `--emit=llvm-ir` instead of `--emit=asm`, output `/output/output.ll`, no x86 syntax option.
 * Diagnostics: `error[E0601]: … --> file:line:col`.
 * GCC-only flags (`-masm=`, `-S`, `-fPIC`, `-march=`, …) are dropped.
 

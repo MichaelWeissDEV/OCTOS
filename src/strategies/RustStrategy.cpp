@@ -62,7 +62,7 @@ QStringList RustStrategy::buildCompilerArgs(const CompilationRequest& req,
         crateType = resolveCrateType(req.rustCrateType, req.sourceCode) == RustCrateType::Library ? "lib" : "bin";
     }
     args << ("--crate-type=" + crateType);
-    args << "--emit=asm";
+    args << (req.outputKind == OutputKind::LlvmIr ? "--emit=llvm-ir" : "--emit=asm");
     args << "--crate-name" << "octos_snippet";   // fixed name: independent of the file name, reproducible
     args << ("--edition=" + (userEdition.isEmpty() ? QString("2021") : userEdition));
     args << "-C" << "codegen-units=1";            // deterministic single assembly unit
@@ -70,7 +70,7 @@ QStringList RustStrategy::buildCompilerArgs(const CompilationRequest& req,
     if (!optLevel.isEmpty()) args << "-C" << ("opt-level=" + optLevel);
 
     // Syntax flavor via LLVM args (x86 targets only; other targets ignore it)
-    if (req.targetsX86()) {
+    if (req.outputKind == OutputKind::Assembly && req.targetsX86()) {
         args << "-C" << (req.syntaxFlavor == SyntaxFlavor::Intel ? "llvm-args=--x86-asm-syntax=intel"
                                                                  : "llvm-args=--x86-asm-syntax=att");
     }
@@ -81,7 +81,7 @@ QStringList RustStrategy::buildCompilerArgs(const CompilationRequest& req,
 
     args << inputFilePath;
     args << "-o";
-    args << (outputDirPath + "/output.s");
+    args << (outputDirPath + "/" + outputFileFor(req));
     return args;
 }
 

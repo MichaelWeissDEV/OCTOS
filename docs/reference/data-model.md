@@ -16,6 +16,7 @@ code (and tests) rely on.
 | `syntaxFlavor` | `SyntaxFlavor` | `Intel` / `ATT` (x86 only) |
 | `userArgs` | `QString` | free-form flags (sanitised by the strategy) |
 | `rustCrateType` | `RustCrateType` | `Auto` / `Binary` / `Library` |
+| `outputKind` | `OutputKind` | `Assembly` (default) / `LlvmIr`; honoured only if `strategy->supportsOutputKind()` (Clang, Rust), otherwise assembly is produced |
 | `extraFiles` | `QVector<QPair<path, content>>` | additional project files placed next to the main file |
 | `mainFilePath` | `QString` | project path of the main file (include directories) |
 | `targetArchitecture` | `QString` | `x86_64`, `aarch64`, … ; empty = unknown = x86 behaviour. `targetsX86()` decides whether x86-only options are passed |

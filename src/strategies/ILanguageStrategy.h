@@ -18,6 +18,12 @@ public:
     virtual QString defaultCompilerBinary(const QString& dockerImage) const = 0;
     virtual QString sourceFileName(const QString& sourceCode) const = 0;
     virtual QString outputFileName() const = 0;
+    // File the compiler writes for this request (differs from outputFileName() for non-default output kinds).
+    virtual QString outputFileFor(const CompilationRequest& /*req*/) const { return outputFileName(); }
+    // Which output kinds this strategy can produce for the given request (image/language specifics).
+    virtual bool supportsOutputKind(OutputKind kind, const CompilationRequest& /*req*/) const {
+        return kind == OutputKind::Assembly;
+    }
 
     virtual QStringList buildCompilerArgs(const CompilationRequest& req,
                                           const QString& inputFilePath,

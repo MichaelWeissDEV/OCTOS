@@ -37,6 +37,7 @@ private slots:
     void testCompileResultIsPresented();
     void testArtifactViewerAndDiagnostics();
     void testCompileNowWorksWithAutoCompileOff();
+    void testOutputKindSelectorFollowsCompiler();
 };
 
 void TestMainWindow::testStartsAndRendersEveryTheme() {
@@ -122,6 +123,31 @@ void TestMainWindow::testCompileNowWorksWithAutoCompileOff() {
     // Without an installed compiler the pane reports it instead of staying silent.
     QVERIFY2(statusText().contains("No Image") || statusText().contains("Compiling"), qPrintable(statusText()));
     AppSettings::instance().setAutoCompile(true);
+}
+
+void TestMainWindow::testOutputKindSelectorFollowsCompiler() {
+    MainWindow w;
+    w.show();
+    CompilerOutputPane* pane = w.findChildren<CompilerOutputPane*>().first();
+    // C++ without a Clang image: only assembly
+    pane->setOutputKind(OutputKind::LlvmIr);
+    QVERIFY(!pane->outputKindSelectable());
+    QCOMPARE(pane->getOutputKind(), OutputKind::Assembly);
+    // Rust always can
+    pane->setLanguage(Language::Rust);
+    QVERIFY(pane->outputKindSelectable());
+    pane->setOutputKind(OutputKind::LlvmIr);
+    QCOMPARE(pane->getOutputKind(), OutputKind::LlvmIr);
+    // switching to a language that cannot, forces assembly again (a stale IR choice must not leak)
+    pane->setLanguage(Language::Java);
+    QVERIFY(!pane->outputKindSelectable());
+    QCOMPARE(pane->getOutputKind(), OutputKind::Assembly);
+    // the asm syntax choice is meaningless for IR
+    pane->setLanguage(Language::Rust);
+    pane->setOutputKind(OutputKind::LlvmIr);
+    bool syntaxEnabled = true;
+    for (QComboBox* c : pane->findChildren<QComboBox*>()) if (c->toolTip().contains("syntax", Qt::CaseInsensitive)) syntaxEnabled = c->isEnabled();
+    QVERIFY(!syntaxEnabled);
 }
 
 void TestMainWindow::testArtifactViewerAndDiagnostics() {

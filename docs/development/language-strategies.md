@@ -57,7 +57,7 @@ testable (the host-compiler tests run the produced vectors against real compiler
    `artifactTruncated` would lose it (this was a real bug).
 5. Set `state` to `Completed` only for exit code 0; use `Failed` otherwise and fill `errorOutput` and
    `diagnostics`. The backend refines the *failure origin* (Docker/Limits/Compiler).
-6. `outputFileName()` is the file the backend reads from `/output`; strategies that print to stdout (Java,
+6. `outputFileFor(req)` (default: `outputFileName()`) is the file the compiler writes for *this* request (`output.ll` for IR); `supportsOutputKind(kind, req)` says which kinds the strategy can do — the backend falls back to assembly otherwise. `outputFileName()` is the file the backend reads from `/output`; strategies that print to stdout (Java,
    Python, C#) ignore the file.
 
 ## `StrategyUtils`

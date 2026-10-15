@@ -297,6 +297,10 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
                       "No compiler strategy available for this language");
     }
 
+    // IR is only produced when the strategy supports it for this request; otherwise assembly is the output.
+    CompilationRequest effectiveReq = req;
+    if (!strategy->supportsOutputKind(req.outputKind, req)) effectiveReq.outputKind = OutputKind::Assembly;
+
     const QByteArray sourceBytes = req.sourceCode.toUtf8();
     qint64 totalSourceBytes = sourceBytes.size();
     for (const auto& extra : req.extraFiles) totalSourceBytes += extra.second.toUtf8().size();
@@ -355,7 +359,7 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
     }
 
     const QString containerInputPath = "/input/" + sourceFile;
-    const QStringList compilerArgs = strategy->buildCompilerArgs(req, containerInputPath, "/output");
+    const QStringList compilerArgs = strategy->buildCompilerArgs(effectiveReq, containerInputPath, "/output");
     const QStringList dockerArgs = buildDockerRunArgs(req, activeConfig, containerName,
                                                       inputDir.path(), outputDir.path(), compilerArgs);
 
@@ -457,7 +461,8 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
     // Read the artifact with a hard size bound and never follow symlinks out of the sandbox.
     bool artifactTruncated = false;
     QString outputFileContent;
-    const QString hostOutputFile = outputDir.path() + "/" + strategy->outputFileName();
+    const QString outputFileNameUsed = strategy->outputFileFor(effectiveReq);
+    const QString hostOutputFile = outputDir.path() + "/" + outputFileNameUsed;
     QFileInfo outInfo(hostOutputFile);
     if (outInfo.exists() && !dockerSide) {
         const QString canonicalRoot = QFileInfo(outputDir.path()).canonicalFilePath() + "/";
@@ -518,9 +523,10 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
         asmArt.type = (req.language == Language::Java) ? ArtifactType::JVM_Bytecode :
                       (req.language == Language::Python) ? ArtifactType::CPython_Bytecode :
                       (req.language == Language::CSharp) ? ArtifactType::CIL : ArtifactType::Assembly;
-        asmArt.name = strategy->outputFileName();
+        asmArt.name = outputFileNameUsed;
+        if (effectiveReq.outputKind == OutputKind::LlvmIr) asmArt.type = ArtifactType::LLVM_IR;
         asmArt.content = result.assemblyOutput;
-        asmArt.containerPath = "/output/" + strategy->outputFileName();
+        asmArt.containerPath = "/output/" + outputFileNameUsed;
         asmArt.truncated = artifactTruncated;
         // Deliberately no host path: the sandbox directory is deleted when this function returns.
         finalize(asmArt, "compiler output file");

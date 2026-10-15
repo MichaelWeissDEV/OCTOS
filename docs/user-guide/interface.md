@@ -50,6 +50,7 @@ Every pane is one independent *compilation configuration*.
 | **Syntax** | Intel / AT&T for x86 targets; disabled for languages without the choice |
 | **Compiler** | installed Docker images compatible with the language |
 | **Flags** | free-form compiler flags, e.g. `-O3 -march=native` (see [Flags](#flags)) |
+| **Output** | *Assembly* or *LLVM IR*; IR is enabled for Clang images and Rust only |
 | **Artifact** | appears when the result has more than one view ([Artifacts](artifacts.md)) |
 | **Save…** | saves the shown artifact to a file |
 | **Cancel** | visible while a job is queued or running |

@@ -27,19 +27,29 @@ QString ClangStrategy::outputFileName() const {
     return "output.s";
 }
 
+bool ClangStrategy::supportsOutputKind(OutputKind kind, const CompilationRequest&) const {
+    return kind == OutputKind::Assembly || kind == OutputKind::LlvmIr;
+}
+
+QString ClangStrategy::outputFileFor(const CompilationRequest& req) const {
+    return req.outputKind == OutputKind::LlvmIr ? "output.ll" : "output.s";
+}
+
 QStringList ClangStrategy::buildCompilerArgs(const CompilationRequest& req,
                                             const QString& inputFilePath,
                                             const QString& outputDirPath) const {
     QStringList args;
     args << defaultCompilerBinary(req.compilerImage);
 
-    // Compilation to assembly
+    // Compilation to assembly, or to textual LLVM IR (-S -emit-llvm)
+    const bool wantIr = req.outputKind == OutputKind::LlvmIr;
     args << "-S";
+    if (wantIr) args << "-emit-llvm";
     args << "-fno-asynchronous-unwind-tables";
 
     // Syntax flavor: Clang supports -masm=intel or -masm=att
     // -masm= exists only on x86 targets (GCC rejects it on aarch64).
-    if (req.targetsX86()) {
+    if (!wantIr && req.targetsX86()) {
         if (req.syntaxFlavor == SyntaxFlavor::Intel) {
             args << "-masm=intel";
         } else {
@@ -75,7 +85,7 @@ QStringList ClangStrategy::buildCompilerArgs(const CompilationRequest& req,
     // Input and output
     args << inputFilePath;
     args << "-o";
-    args << (outputDirPath + "/output.s");
+    args << (outputDirPath + "/" + outputFileFor(req));
 
     return args;
 }

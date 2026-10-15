@@ -281,6 +281,7 @@ void TestWorkspace::testBuildRequestUsesProfileAndHeaders() {
     QVERIFY(req.sourceCode.contains("helper"));
     QCOMPARE(req.extraFiles.size(), 1);
     QCOMPARE(req.extraFiles[0].first, QString("src/util.h"));
+    QCOMPARE(req.outputKind, OutputKind::Assembly);
     QVERIFY(!ws.buildRequest("nope", "", &req, &err));
     QVERIFY(!ws.buildRequest("gcc-o3", "nope", &req, &err));
 }

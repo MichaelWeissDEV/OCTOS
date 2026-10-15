@@ -38,6 +38,7 @@ private:
     QLineEdit* m_flags;
     QComboBox* m_syntax;
     QComboBox* m_crate;
+    QComboBox* m_output;
     QLineEdit* m_arch;
     QWidget* m_form;
     bool m_updating{false};

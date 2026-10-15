@@ -314,6 +314,7 @@ void MainWindow::wirePane(CompilerOutputPane* pane) {
         onPaneSettingsChanged();
     });
     connect(pane, &CompilerOutputPane::syntaxChanged, this, &MainWindow::onPaneSettingsChanged);
+    connect(pane, &CompilerOutputPane::outputKindChanged, this, &MainWindow::onPaneSettingsChanged);
     connect(pane, &CompilerOutputPane::cancelRequested, this, [this, pane]() {
         if (pane->getCurrentJobId() > 0) m_dockerManager->cancelJob(pane->getCurrentJobId());
     });
@@ -504,6 +505,7 @@ void MainWindow::compileAllPanes() {
         req.language = lang;
         req.syntaxFlavor = syntax;
         req.userArgs = flags;
+        req.outputKind = pane->getOutputKind();
         req.timeoutMs = 30000;
         {   // The probed architecture is exact; otherwise images are native to the Docker daemon.
             const CompilerDefinition def = CompilerRegistry::instance().compilerForImage(compiler);

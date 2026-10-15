@@ -88,6 +88,7 @@ bool ProfileStore::buildComparisonRequests(const CompilerProfile& a, const Compi
         r.syntaxFlavor = p.syntaxFlavor;
         r.userArgs = p.effectiveFlags();
         r.rustCrateType = p.rustCrateType;
+        r.outputKind = stringToOutputKind(p.outputFormat);
         return r;
     };
     *outA = make(a);

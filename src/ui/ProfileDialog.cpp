@@ -54,6 +54,9 @@ ProfileDialog::ProfileDialog(const ProfileStore& store, const QStringList& insta
     m_crate->addItem("Auto (main() → binary, otherwise library)", int(RustCrateType::Auto));
     m_crate->addItem("Binary", int(RustCrateType::Binary));
     m_crate->addItem("Library", int(RustCrateType::Library));
+    m_output = new QComboBox();
+    m_output->addItem("Assembly", "assembly");
+    m_output->addItem("LLVM IR (Clang, Rust)", "llvm-ir");
     m_arch = new QLineEdit();
     m_arch->setPlaceholderText("informational, e.g. x86_64");
     form->addRow("Name", m_name);
@@ -62,6 +65,7 @@ ProfileDialog::ProfileDialog(const ProfileStore& store, const QStringList& insta
     form->addRow("Optimization", m_optimization);
     form->addRow("Flags", m_flags);
     form->addRow("Syntax", m_syntax);
+    form->addRow("Output", m_output);
     form->addRow("Rust crate type", m_crate);
     form->addRow("Target architecture", m_arch);
     auto* hint = new QLabel("Two profiles (e.g. GCC -O0 and -O3) can be compared side by side without re-entering anything.");
@@ -88,6 +92,7 @@ ProfileDialog::ProfileDialog(const ProfileStore& store, const QStringList& insta
     connect(m_flags, &QLineEdit::textEdited, this, &ProfileDialog::onFieldEdited);
     connect(m_syntax, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ProfileDialog::onFieldEdited);
     connect(m_crate, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ProfileDialog::onFieldEdited);
+    connect(m_output, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ProfileDialog::onFieldEdited);
     connect(m_arch, &QLineEdit::textEdited, this, &ProfileDialog::onFieldEdited);
 
     rebuildList(QString());
@@ -129,6 +134,7 @@ void ProfileDialog::fillForm(const CompilerProfile* p) {
     m_syntax->setCurrentIndex(p && p->syntaxFlavor == SyntaxFlavor::ATT ? 1 : 0);
     m_crate->setCurrentIndex(p ? m_crate->findData(int(p->rustCrateType)) : 0);
     m_arch->setText(p ? p->targetArchitecture : QString());
+    m_output->setCurrentIndex(p && p->outputFormat == "llvm-ir" ? 1 : 0);
     m_crate->setEnabled(p && p->language == Language::Rust);
     m_updating = false;
 }
@@ -150,6 +156,7 @@ void ProfileDialog::onFieldEdited() {
     p->syntaxFlavor = m_syntax->currentData().toInt() == int(SyntaxFlavor::ATT) ? SyntaxFlavor::ATT : SyntaxFlavor::Intel;
     p->rustCrateType = static_cast<RustCrateType>(m_crate->currentData().toInt());
     p->targetArchitecture = m_arch->text().trimmed();
+    p->outputFormat = m_output->currentData().toString();
     m_crate->setEnabled(p->language == Language::Rust);
     if (auto* it = m_list->currentItem()) it->setText(p->name.isEmpty() ? p->id : p->name);
 }

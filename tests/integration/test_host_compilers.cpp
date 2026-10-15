@@ -54,7 +54,7 @@ HostRun runStrategy(const CompilationRequest& req, const QStringList& afterBinar
     r.exitCode = p.exitCode();
     r.out = QString::fromUtf8(p.readAllStandardOutput());
     r.err = QString::fromUtf8(p.readAllStandardError());
-    QFile a(out.path() + "/" + strat->outputFileName());
+    QFile a(out.path() + "/" + strat->outputFileFor(req));
     if (a.open(QIODevice::ReadOnly)) r.asmFile = QString::fromUtf8(a.readAll());
     return r;
 }
@@ -77,6 +77,8 @@ private slots:
     void testRustOptimizationChangesOutput();
     void testRustCompileError();
     void testClangX86ElfOutput();
+    void testClangLlvmIr();
+    void testRustLlvmIr();
     void testClangCompileError();
     void testPythonDisassembly();
     void testPythonSyntaxError();
@@ -170,6 +172,33 @@ void TestHostCompilers::testClangX86ElfOutput() {
     QVERIFY(r.asmFile.contains(".loc"));
     QVERIFY(r.asmFile.contains("imull"));
     QVERIFY(r.asmFile.contains(".size"));
+}
+
+void TestHostCompilers::testClangLlvmIr() {
+    if (!toolWorks("clang")) QSKIP("clang not installed on host", SkipAll);
+    CompilationRequest req;
+    req.language = Language::Cpp; req.compilerImage = "clang:latest";
+    req.outputKind = OutputKind::LlvmIr;
+    req.userArgs = "-O1";
+    req.sourceCode = "int square(int x) { return x * x; }\n";
+    auto r = runStrategy(req, {"--target=x86_64-unknown-linux-gnu"});
+    QVERIFY2(r.exitCode == 0, qPrintable(r.err + "\n" + r.args.join(' ')));
+    QVERIFY2(r.asmFile.contains("define"), "output.ll must contain LLVM IR");
+    QVERIFY(r.asmFile.contains("_Z6squarei"));
+    QVERIFY(!r.asmFile.contains(".type"));                         // not assembly
+    QVERIFY(!r.args.join(' ').contains("-masm"));
+}
+
+void TestHostCompilers::testRustLlvmIr() {
+    if (!toolWorks("rustc")) QSKIP("rustc not installed on host", SkipAll);
+    auto req = rustReq("#[no_mangle]\npub extern \"C\" fn add_two(x: i32) -> i32 { x + 2 }\n");
+    req.outputKind = OutputKind::LlvmIr;
+    auto r = runStrategy(req);
+    QVERIFY2(r.exitCode == 0, qPrintable(r.err + "\n" + r.args.join(' ')));
+    QVERIFY(r.asmFile.contains("define"));
+    QVERIFY(r.asmFile.contains("add_two"));
+    QVERIFY(r.args.contains("--emit=llvm-ir"));
+    QVERIFY(!r.args.join(' ').contains("x86-asm-syntax"));
 }
 
 void TestHostCompilers::testClangCompileError() {

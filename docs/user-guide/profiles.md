@@ -10,6 +10,7 @@ A **profile** stores everything needed to reproduce a compilation setup, so you 
 | Optimization | e.g. `-O3`, or `-C opt-level=3` for Rust |
 | Flags | additional flags, e.g. `-Wall -march=native` |
 | Syntax | Intel / AT&T |
+| Output | Assembly or LLVM IR (Clang, Rust) |
 | Rust crate type | Auto (binary if `main` exists, otherwise library), Binary, Library |
 | Target architecture | informational note (e.g. `x86_64`) |
 

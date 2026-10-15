@@ -115,8 +115,21 @@ void CompilerOutputPane::setupUi() {
     headerLayout->addWidget(compilerLabel, 1, 4);
     headerLayout->addWidget(m_compilerCombo, 1, 5, 1, 2);
 
+    QLabel* outputLabel = new QLabel("Output:");
+    Theme::setRole(outputLabel, "toolbarLabel");
+    m_outputCombo = new QComboBox();
+    m_outputCombo->addItem("Assembly", int(OutputKind::Assembly));
+    m_outputCombo->addItem("LLVM IR", int(OutputKind::LlvmIr));
+    connect(m_outputCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        updateCompatibilityState();   // the assembly syntax choice is meaningless for IR
+        updateTitle();
+        emit outputKindChanged(getOutputKind());
+    });
+
     headerLayout->addWidget(flagsLabel, 2, 0);
-    headerLayout->addWidget(m_flagsInput, 2, 1, 1, 6);
+    headerLayout->addWidget(m_flagsInput, 2, 1, 1, 3);
+    headerLayout->addWidget(outputLabel, 2, 4);
+    headerLayout->addWidget(m_outputCombo, 2, 5, 1, 2);
 
     headerLayout->setColumnStretch(5, 1);
 
@@ -278,6 +291,17 @@ bool CompilerOutputPane::hasCompiler(const QString& compilerName) const {
     return m_compilerCombo->findText(compilerName) >= 0;
 }
 
+OutputKind CompilerOutputPane::getOutputKind() const {
+    // A disabled selector always means Assembly: a stale IR choice must not leak into e.g. GCC compilations.
+    if (!m_outputCombo || !m_outputCombo->isEnabled()) return OutputKind::Assembly;
+    return static_cast<OutputKind>(m_outputCombo->currentData().toInt());
+}
+
+void CompilerOutputPane::setOutputKind(OutputKind kind) {
+    const int idx = m_outputCombo->findData(int(kind));
+    if (idx >= 0) m_outputCombo->setCurrentIndex(idx);
+}
+
 QString CompilerOutputPane::getSelectedCompiler() const { return m_compilerCombo->currentText(); }
 QString CompilerOutputPane::getCompilerFlags() const { return m_flagsInput->text(); }
 Language CompilerOutputPane::getLanguage() const { return m_currentLanguage; }
@@ -290,6 +314,7 @@ void CompilerOutputPane::setAssemblyLineMapping(const QMap<int, QVector<int>>& m
 
 void CompilerOutputPane::onCompilerChanged(int index) {
     if (index >= 0) {
+        updateCompatibilityState();
         updateTitle();
         emit compilerChanged(m_compilerCombo->currentText());
     }
@@ -322,8 +347,15 @@ void CompilerOutputPane::onCloseClicked() {
 }
 
 void CompilerOutputPane::updateCompatibilityState() {
+    {   // LLVM IR exists for Clang images and Rust only (GCC cannot produce it).
+        const bool clangImage = m_compilerCombo && m_compilerCombo->currentText().toLower().contains("clang");
+        const bool canIr = (m_currentLanguage == Language::Rust) || ((m_currentLanguage == Language::Cpp || m_currentLanguage == Language::C) && clangImage);
+        m_outputCombo->setEnabled(canIr);
+        m_outputCombo->setToolTip(canIr ? "Choose assembly or LLVM IR output"
+                                        : "LLVM IR is available for Clang images and Rust");
+    }
     bool supportsSyntax = LanguageStrategyRegistry::instance().supportsSyntaxFlavor(m_currentLanguage);
-    m_syntaxCombo->setEnabled(supportsSyntax);
+    m_syntaxCombo->setEnabled(supportsSyntax && getOutputKind() == OutputKind::Assembly);
     if (!supportsSyntax) {
         m_syntaxCombo->setToolTip("Syntax flavor (Intel/AT&T) is not applicable to " + languageToString(m_currentLanguage));
     } else {
@@ -338,6 +370,7 @@ void CompilerOutputPane::updateTitle() {
     QString syn = m_syntaxCombo->isEnabled() ? (" | " + m_syntaxCombo->currentText()) : "";
     QString flags = m_flagsInput->text();
     if (!flags.isEmpty()) flags = " | " + flags;
+    if (getOutputKind() == OutputKind::LlvmIr) flags += " | LLVM IR";
     m_titleLabel->setText(QString("%1 | %2%3%4").arg(lang, comp, syn, flags));
 }
 

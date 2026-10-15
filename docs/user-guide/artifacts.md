@@ -6,7 +6,7 @@ more than one view) chooses which one you look at.
 | Artifact | Produced by | Shown as |
 | --- | --- | --- |
 | **Assembly** | GCC, Clang, Rust (and GNAT) | text with assembly highlighting, filters, source mapping |
-| **LLVM IR** | (data model and viewer exist; the current strategies do not emit it yet) | LLVM IR highlighting |
+| **LLVM IR** | Clang (`-S -emit-llvm`) and Rust (`--emit=llvm-ir`) when the pane's **Output** is *LLVM IR* | LLVM IR highlighting |
 | **JVM Bytecode** | Java (`javap -c -v -p` of *every* generated class) | bytecode highlighting |
 | **CPython Bytecode** | Python (`dis`) | opcode highlighting; labelled *not native assembly* |
 | **CIL** | C# (`monodis`) | CIL highlighting |
@@ -16,6 +16,15 @@ more than one view) chooses which one you look at.
 
 Which artifact opens first: a successful compilation opens its first code artifact (assembly / IR /
 bytecode); a failed one opens the diagnostics (or the raw error text if there are none).
+
+## Choosing assembly or LLVM IR
+
+Each pane has an **Output** selector: *Assembly* (default) or *LLVM IR*. It is enabled for **Clang images** (C/C++) and
+**Rust**; for GCC and the other languages it is disabled and the pane always produces assembly (a stale IR choice
+never leaks into a GCC compilation). For IR the assembly *syntax* selector is disabled — IR has no Intel/AT&T
+flavour. The IR artifact is the file `output.ll` (the artifact name tells you), is highlighted with IR rules, is not
+run through the assembly filters, and is not analysed by the assembly analysis panel. A diff between an assembly pane
+and an IR pane shows the usual "different artifact formats" warning. Profiles store the choice in *Output*.
 
 ## Diagnostics table
 

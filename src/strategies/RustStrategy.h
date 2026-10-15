@@ -13,6 +13,10 @@ public:
     QString defaultCompilerBinary(const QString& /*dockerImage*/) const override { return "rustc"; }
     QString sourceFileName(const QString& /*sourceCode*/) const override { return "source.rs"; }
     QString outputFileName() const override { return "output.s"; }
+    QString outputFileFor(const CompilationRequest& req) const override {
+        return req.outputKind == OutputKind::LlvmIr ? "output.ll" : "output.s";
+    }
+    bool supportsOutputKind(OutputKind, const CompilationRequest&) const override { return true; }
 
     QStringList buildCompilerArgs(const CompilationRequest& req,
                                   const QString& inputFilePath,

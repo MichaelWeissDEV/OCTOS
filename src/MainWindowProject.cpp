@@ -561,6 +561,7 @@ void MainWindow::applyProfileToPane(const CompilerProfile& profile, CompilerOutp
     }
     pane->setCompilerFlags(profile.effectiveFlags());
     pane->setSyntaxFlavor(profile.syntaxFlavor);
+    pane->setOutputKind(stringToOutputKind(profile.outputFormat));   // ignored by panes that cannot produce IR
 }
 
 CompilerOutputPane* MainWindow::ensurePaneCount(int n) {
@@ -631,6 +632,7 @@ void MainWindow::onSavePaneAsProfile() {
     p.language = pane->getLanguage();
     p.userFlags = pane->getCompilerFlags();       // flags are stored as typed (optimization included)
     p.syntaxFlavor = pane->getSyntaxFlavor();
+    p.outputFormat = outputKindToString(pane->getOutputKind());
     QString err;
     if (!store.add(p, &err) || !store.save(&err)) { QMessageBox::warning(this, "Save Profile", err); return; }
     rebuildApplyProfileMenu();

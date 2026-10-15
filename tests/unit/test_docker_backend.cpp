@@ -68,6 +68,7 @@ private slots:
     void testRunArgsAreHardened();
     void testArtifactsMetadataAndDiagnostics();
     void testArtifactPersistence();
+    void testLlvmIrOutputKind();
     void testBoundedAppendAndUtf8();
     void testConfigSanitizingIsPerField();
 };
@@ -93,7 +94,7 @@ case "$1" in
     out=""
     for a in "$@"; do case "$a" in *:/output:rw) out="${a%:/output:rw}";; esac; done
     case "$MODE" in
-      ok|clientexit) echo ".text" > "$out/output.s"; echo "compiler says hi"; exit 0;;
+      ok|clientexit) echo ".text" > "$out/output.s"; echo "define i32 @f() { ret i32 0 }" > "$out/output.ll"; echo "compiler says hi"; exit 0;;
       slowstart) sleep 1; echo ".text" > "$out/output.s"; exit 0;;
       compilererror) echo "source.cpp:1:5: error: 'x' was not declared in this scope" >&2; exit 1;;
       daemondown) echo "Cannot connect to the Docker daemon at unix:///x. Is the docker daemon running?" >&2; exit 125;;
@@ -362,6 +363,32 @@ void TestDockerBackend::testArtifactPersistence() {
     QVERIFY(!other.saveTo(out.path() + "/missing-dir/x.s", &err));       // a failed save claims nothing
     other.persistentPath.clear();
     QVERIFY(!other.saveTo(QString(), &err));
+}
+
+void TestDockerBackend::testLlvmIrOutputKind() {
+    DockerExecutionBackend be(cfg());
+    auto q = req(40);
+    q.compilerImage = "silkeh/clang:17";
+    q.outputKind = OutputKind::LlvmIr;
+    auto r = be.execute(q);
+    QCOMPARE(r.state, JobState::Completed);
+    QVERIFY(r.hasArtifact(ArtifactType::LLVM_IR));
+    QVERIFY(!r.hasArtifact(ArtifactType::Assembly));
+    QCOMPARE(r.artifact(ArtifactType::LLVM_IR).name, QString("output.ll"));
+    QVERIFY(r.assemblyOutput.contains("define i32 @f"));
+    QVERIFY(r.compilerCommand.contains("-emit-llvm"));
+    QVERIFY(r.compilerCommand.contains("output.ll"));
+    QVERIFY(!r.compilerCommand.contains("-masm"));                    // no assembly syntax option for IR
+    QCOMPARE(r.artifact(ArtifactType::LLVM_IR).containerPath, QString("/output/output.ll"));
+
+    // GCC cannot produce IR: the request quietly falls back to assembly instead of failing
+    auto g = req(41);
+    g.compilerImage = "gcc:13";
+    g.outputKind = OutputKind::LlvmIr;
+    auto gr = be.execute(g);
+    QCOMPARE(gr.state, JobState::Completed);
+    QVERIFY(gr.hasArtifact(ArtifactType::Assembly));
+    QVERIFY(!gr.compilerCommand.contains("-emit-llvm"));
 }
 
 void TestDockerBackend::testBoundedAppendAndUtf8() {

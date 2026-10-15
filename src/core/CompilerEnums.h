@@ -39,6 +39,18 @@ enum class RustCrateType {
     Library
 };
 
+// What a compilation should produce. LlvmIr is available for Clang and Rust.
+enum class OutputKind {
+    Assembly,
+    LlvmIr
+};
+
+inline QString outputKindToString(OutputKind k) { return k == OutputKind::LlvmIr ? "llvm-ir" : "assembly"; }
+inline OutputKind stringToOutputKind(const QString& s) {
+    const QString l = s.toLower();
+    return (l == "llvm-ir" || l == "llvm_ir" || l == "ir") ? OutputKind::LlvmIr : OutputKind::Assembly;
+}
+
 enum class JobState {
     Queued,
     Starting,

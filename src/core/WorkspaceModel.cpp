@@ -364,6 +364,7 @@ bool Workspace::buildRequest(const QString& profileId, const QString& targetName
     req.syntaxFlavor = prof->syntaxFlavor;
     req.userArgs = prof->effectiveFlags();
     req.rustCrateType = prof->rustCrateType;
+    req.outputKind = stringToOutputKind(prof->outputFormat);
     // Every other file of the target (headers, modules) is sent along, next to the main file.
     for (const QString& f : target->sourceFiles) {
         if (f == target->mainSourceFile) continue;
