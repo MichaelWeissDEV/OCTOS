@@ -26,7 +26,12 @@ struct CompilationRequest {
         const QString a = targetArchitecture.toLower();
         return a.isEmpty() || a.contains("x86") || a.contains("amd64") || a.contains("i386") || a.contains("i686");
     }
-    QString mainFilePath;   // project-relative path of the main source (used to derive include directories)
+    // Project mode: project-relative path of the main source. The backend places the main file at this path
+    // inside the sandbox, so relative #include and Rust `mod` lookups behave as in the real project tree.
+    // Empty = single-file mode (the main source is written under the strategy's canonical file name).
+    QString mainFilePath;
+    // Project-relative include directories of the active build target (C/C++ only; unsafe entries are ignored).
+    QStringList includePaths;
     OutputKind outputKind{OutputKind::Assembly};   // honoured only if the strategy supports it
     RustCrateType rustCrateType{RustCrateType::Auto}; // only used for Language::Rust
     int timeoutMs{30000};

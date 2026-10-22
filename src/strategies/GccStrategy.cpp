@@ -65,12 +65,8 @@ QStringList GccStrategy::buildCompilerArgs(const CompilationRequest& req,
 
     args.append(userFlags);
 
-    // Project mode: headers sit next to / below the main file inside the sandbox.
-    if (!req.extraFiles.isEmpty()) {
-        args << "-I/input";
-        const int slash = req.mainFilePath.lastIndexOf('/');
-        if (slash > 0) args << ("-I/input/" + req.mainFilePath.left(slash));
-    }
+    // Project mode: the project root, the main file's directory and the target's include paths.
+    args << StrategyUtils::projectIncludeFlags(req, inputFilePath);
 
     // Input and output
     args << inputFilePath;

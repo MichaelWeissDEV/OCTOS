@@ -365,7 +365,9 @@ bool Workspace::buildRequest(const QString& profileId, const QString& targetName
     req.userArgs = prof->effectiveFlags();
     req.rustCrateType = prof->rustCrateType;
     req.outputKind = stringToOutputKind(prof->outputFormat);
-    // Every other file of the target (headers, modules) is sent along, next to the main file.
+    req.mainFilePath = target->mainSourceFile;
+    req.includePaths = target->includePaths;
+    // Every other file of the target (headers, modules) is sent along, at its project path.
     for (const QString& f : target->sourceFiles) {
         if (f == target->mainSourceFile) continue;
         if (hasSourceFile(f)) req.extraFiles.append({f, findSourceFile(f).content});

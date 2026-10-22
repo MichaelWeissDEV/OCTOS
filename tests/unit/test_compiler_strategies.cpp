@@ -4,6 +4,7 @@
 #include "strategies/LanguageStrategyRegistry.h"
 #include "strategies/StrategyUtils.h"
 #include "strategies/JavaStrategy.h"
+#include "strategies/RustStrategy.h"
 #include "core/CompilationRequest.h"
 #include "core/CompilerRegistry.h"
 
@@ -25,6 +26,11 @@ private slots:
     void testCompilerRegistryDefaults();
     void testCompilerRegistryInference();
     void testCompilerCompatibilityFilter();
+    void testRustCrateTypeFromPath();
+    void testRustCrateInfoFromCargoToml();
+    void testProjectIncludeFlags();
+    void testAcceptsSourceName();
+    void testJavaSourceRoot();
 };
 
 void TestCompilerStrategies::testGccStrategyArgs() {
@@ -283,6 +289,149 @@ void TestCompilerStrategies::testCompilerCompatibilityFilter() {
     QVERIFY(!reg.isImageCompatibleWithLanguage("ubuntu:latest", Language::Cpp));
     QVERIFY(!reg.isImageCompatibleWithLanguage("nginx:alpine", Language::Rust));
     QVERIFY(!reg.isImageCompatibleWithLanguage("trusty-rust-backend", Language::Rust));
+}
+
+void TestCompilerStrategies::testRustCrateTypeFromPath() {
+    // The crate root's path decides as Cargo does, even against the content heuristic.
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Auto, "fn main() {}", "src/lib.rs"), RustCrateType::Library);
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Auto, "pub fn f() {}", "src/main.rs"), RustCrateType::Binary);
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Auto, "pub fn f() {}", "src/bin/tool.rs"), RustCrateType::Binary);
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Auto, "pub fn f() {}", "examples/demo.rs"), RustCrateType::Binary);
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Auto, "pub fn f() {}", "src/other.rs"), RustCrateType::Library);
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Auto, "fn main() {}", "src/other.rs"), RustCrateType::Binary);
+    // An explicit choice always wins.
+    QCOMPARE(RustStrategy::resolveCrateType(RustCrateType::Binary, "", "src/lib.rs"), RustCrateType::Binary);
+}
+
+void TestCompilerStrategies::testRustCrateInfoFromCargoToml() {
+    const auto* strat = LanguageStrategyRegistry::instance().getStrategy(Language::Rust, "rust:1.80");
+    QVERIFY(strat);
+
+    // Single-file mode: fixed name, no manifest, no warnings.
+    CompilationRequest single;
+    single.language = Language::Rust;
+    single.sourceCode = "pub fn f() {}";
+    auto info = RustStrategy::crateInfo(single);
+    QCOMPARE(info.crateName, QString("octos_snippet"));
+    QVERIFY(info.manifestPath.isEmpty());
+    QVERIFY(info.warnings.isEmpty());
+
+    // Name with '-' is sanitised; edition in single quotes; comments ignored; dependencies warned about.
+    CompilationRequest req = single;
+    req.mainFilePath = "src/lib.rs";
+    req.extraFiles.append({QString("Cargo.toml"),
+                           QString("[package] # the crate\nname = \"my-crate\" # trailing\nedition = '2018'\n\n"
+                                   "[dependencies]\nserde = \"1\"\n")});
+    info = RustStrategy::crateInfo(req);
+    QCOMPARE(info.crateName, QString("my_crate"));
+    QCOMPARE(info.edition, QString("2018"));
+    QCOMPARE(info.manifestPath, QString("Cargo.toml"));
+    QCOMPARE(info.warnings.size(), 1);
+    QVERIFY(info.warnings.first().contains("dependencies"));
+    QCOMPARE(strat->requestWarnings(req), info.warnings);
+    QStringList args = strat->buildCompilerArgs(req, "/input/src/lib.rs", "/output");
+    QVERIFY(args.join(' ').contains("--crate-name my_crate"));
+    QVERIFY(args.contains("--edition=2018"));
+    QVERIFY(args.contains("--crate-type=lib"));
+    req.userArgs = "--edition 2024";                        // the user's flag overrides the manifest
+    args = strat->buildCompilerArgs(req, "/input/src/lib.rs", "/output");
+    QVERIFY(args.contains("--edition=2024"));
+    QVERIFY(!args.contains("--edition=2018"));
+
+    // The nearest manifest wins over a workspace root; [lib] name renames the library crate.
+    CompilationRequest ws = single;
+    ws.mainFilePath = "crates/alpha/src/lib.rs";
+    ws.extraFiles.append({QString("Cargo.toml"), QString("[workspace]\nmembers = [\"crates/alpha\"]\n")});
+    ws.extraFiles.append({QString("crates/alpha/Cargo.toml"),
+                          QString("[package]\nname = \"alpha\"\nedition = \"2021\"\n[lib]\nname = \"alpha_core\"\n"
+                                  "[dev-dependencies]\nproptest = \"1\"\n")});
+    info = RustStrategy::crateInfo(ws);
+    QCOMPARE(info.manifestPath, QString("crates/alpha/Cargo.toml"));
+    QCOMPARE(info.crateName, QString("alpha_core"));
+    QVERIFY2(info.warnings.isEmpty(), qPrintable(info.warnings.join('\n')));   // dev-dependencies are not needed
+
+    // src/bin/<name>.rs is a binary named after the file; a build script is reported.
+    CompilationRequest bin = single;
+    bin.mainFilePath = "src/bin/tool-x.rs";
+    bin.extraFiles.append({QString("Cargo.toml"), QString("[package]\nname = \"pkg\"\n[dependencies.rand]\nversion = \"0.8\"\n")});
+    bin.extraFiles.append({QString("build.rs"), QString("fn main() {}")});
+    info = RustStrategy::crateInfo(bin);
+    QCOMPARE(info.crateName, QString("tool_x"));
+    QCOMPARE(info.warnings.size(), 2);
+    QVERIFY(strat->buildCompilerArgs(bin, "/input/src/bin/tool-x.rs", "/output").contains("--crate-type=bin"));
+
+    // Names that are not identifiers fall back to the fixed name with a warning; odd editions are ignored.
+    CompilationRequest bad = single;
+    bad.mainFilePath = "lib.rs";
+    bad.extraFiles.append({QString("Cargo.toml"), QString("[package]\nname = \"1st crate\"\nedition = \"next\"\n")});
+    info = RustStrategy::crateInfo(bad);
+    QCOMPARE(info.crateName, QString("octos_snippet"));
+    QVERIFY(info.edition.isEmpty());
+    QCOMPARE(info.warnings.size(), 2);
+}
+
+void TestCompilerStrategies::testProjectIncludeFlags() {
+    QCOMPARE(StrategyUtils::containerProjectRoot("/input/src/app/main.cpp", "src/app/main.cpp"), QString("/input"));
+    QCOMPARE(StrategyUtils::containerProjectRoot("/input/src/source.cpp", "src/main.txt"), QString("/input"));
+    QCOMPARE(StrategyUtils::containerProjectRoot("/input/source.cpp", QString()), QString("/input"));
+
+    CompilationRequest req;
+    req.language = Language::Cpp;
+    req.compilerImage = "gcc:13";
+    req.sourceCode = "int main(){}";
+    const auto* gcc = LanguageStrategyRegistry::instance().getStrategy(Language::Cpp, "gcc:13");
+    // Single-file mode: no include flags at all.
+    QVERIFY(StrategyUtils::projectIncludeFlags(req, "/input/source.cpp").isEmpty());
+    for (const QString& a : gcc->buildCompilerArgs(req, "/input/source.cpp", "/output")) QVERIFY(!a.startsWith("-I"));
+
+    // Project mode: root, main directory, target include paths (unsafe and duplicate ones dropped).
+    req.mainFilePath = "src/app/main.cpp";
+    req.includePaths = {"include", "../evil", "/usr/include", "include", "third_party//json/./include"};
+    const QStringList flags = StrategyUtils::projectIncludeFlags(req, "/input/src/app/main.cpp");
+    QCOMPARE(flags, QStringList({"-I/input", "-I/input/src/app", "-I/input/include", "-I/input/third_party/json/include"}));
+    const QStringList args = gcc->buildCompilerArgs(req, "/input/src/app/main.cpp", "/output");
+    for (const QString& f : flags) QVERIFY(args.contains(f));
+    const auto* clang = LanguageStrategyRegistry::instance().getStrategy(Language::Cpp, "silkeh/clang:17");
+    QVERIFY(clang->buildCompilerArgs(req, "/input/src/app/main.cpp", "/output").contains("-I/input/include"));
+}
+
+void TestCompilerStrategies::testAcceptsSourceName() {
+    auto& reg = LanguageStrategyRegistry::instance();
+    const auto* cpp = reg.getStrategy(Language::Cpp, "gcc:13");
+    QVERIFY(cpp->acceptsSourceName("main.cpp"));
+    QVERIFY(cpp->acceptsSourceName("main.cc"));
+    QVERIFY(cpp->acceptsSourceName("main.cxx"));
+    QVERIFY(!cpp->acceptsSourceName("main.c"));
+    QVERIFY(!cpp->acceptsSourceName("main.h"));
+    QVERIFY(!cpp->acceptsSourceName("notes.txt"));
+    QVERIFY(!cpp->acceptsSourceName("Makefile"));
+    const auto* c = reg.getStrategy(Language::C, "silkeh/clang:17");
+    QVERIFY(c->acceptsSourceName("main.c"));
+    QVERIFY(!c->acceptsSourceName("main.cpp"));
+    QVERIFY(reg.getStrategy(Language::Rust, "rust:1")->acceptsSourceName("lib.rs"));
+    QVERIFY(!reg.getStrategy(Language::Rust, "rust:1")->acceptsSourceName("lib.rs.bak"));
+    QVERIFY(reg.getStrategy(Language::Java, "openjdk:21")->acceptsSourceName("App.java"));
+    QVERIFY(reg.getStrategy(Language::Python, "python:3")->acceptsSourceName("tool.py"));
+    QVERIFY(!reg.getStrategy(Language::Python, "python:3")->acceptsSourceName(".py"));
+}
+
+void TestCompilerStrategies::testJavaSourceRoot() {
+    QCOMPARE(JavaStrategy::sourceRoot("package com.acme;\npublic class App {}", "/input/src/main/java/com/acme/App.java"),
+             QString("/input/src/main/java"));
+    QCOMPARE(JavaStrategy::sourceRoot("/* header */\npackage com . acme ;\nclass App {}", "/input/com/acme/App.java"),
+             QString("/input"));
+    // File not inside its package directory (single-file mode): its own directory.
+    QCOMPARE(JavaStrategy::sourceRoot("package com.acme;\nclass App {}", "/input/App.java"), QString("/input"));
+    QCOMPARE(JavaStrategy::sourceRoot("class App {}", "/input/src/App.java"), QString("/input/src"));
+
+    CompilationRequest req;
+    req.language = Language::Java;
+    req.compilerImage = "openjdk:21";
+    req.sourceCode = "package demo;\npublic class App {}";
+    const QStringList args = LanguageStrategyRegistry::instance().getStrategy(Language::Java, "openjdk:21")
+                                 ->buildCompilerArgs(req, "/input/src/demo/App.java", "/output");
+    QVERIFY(args.join(' ').contains("-sourcepath"));
+    QCOMPARE(args.last(), QString("/input/src"));
 }
 
 OCTOS_TEST_MAIN(TestCompilerStrategies)

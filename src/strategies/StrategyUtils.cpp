@@ -1,4 +1,5 @@
 #include "StrategyUtils.h"
+#include "../core/WorkspaceModel.h"
 #include <QRegularExpression>
 
 namespace StrategyUtils {
@@ -133,6 +134,50 @@ QVector<Diagnostic> parseClangGccDiagnostics(const QString& text) {
     }
 
     return list;
+}
+
+bool isSourceSuffixFor(Language language, const QString& fileName) {
+    const int dot = fileName.lastIndexOf('.');
+    if (dot <= 0) return false;
+    const QString suffix = fileName.mid(dot + 1);
+    if (language == Language::C) return suffix == "c";
+    if (language == Language::Cpp) {
+        static const QStringList cxx{"cpp", "cc", "cxx", "c++", "cp", "C", "CPP"};
+        return cxx.contains(suffix);
+    }
+    return false;
+}
+
+QString containerProjectRoot(const QString& inputFilePath, const QString& mainFilePath) {
+    QString root = inputFilePath;
+    const int components = mainFilePath.isEmpty() ? 1 : int(mainFilePath.count('/')) + 1;
+    for (int i = 0; i < components; ++i) {
+        const int slash = root.lastIndexOf('/');
+        if (slash <= 0) return root.startsWith('/') ? QStringLiteral("/") : QString();
+        root.truncate(slash);
+    }
+    return root;
+}
+
+QStringList projectIncludeFlags(const CompilationRequest& req, const QString& inputFilePath) {
+    if (req.mainFilePath.isEmpty() && req.extraFiles.isEmpty()) return {};
+    const QString root = containerProjectRoot(inputFilePath, req.mainFilePath);
+    QStringList dirs{root};
+    const int slash = inputFilePath.lastIndexOf('/');
+    if (slash > 0) dirs << inputFilePath.left(slash);
+    for (const QString& inc : req.includePaths) {
+        bool ok = false;
+        const QString clean = Workspace::normalizeRelativePath(inc, &ok);
+        if (ok && !clean.isEmpty()) dirs << root + "/" + clean;
+    }
+    QStringList flags;
+    QStringList seen;
+    for (const QString& d : dirs) {
+        if (seen.contains(d)) continue;
+        seen << d;
+        flags << ("-I" + d);
+    }
+    return flags;
 }
 
 } // namespace StrategyUtils

@@ -10,6 +10,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QRegularExpression>
+#include <QSet>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -322,43 +323,61 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
                           QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
                           QFile::ReadGroup | QFile::ExeGroup);
 
-    const QString sourceFile = strategy->sourceFileName(req.sourceCode);
-    {
-        QFile srcOut(inputDir.path() + "/" + sourceFile);
-        if (!srcOut.open(QIODevice::WriteOnly) ||
-            srcOut.write(sourceBytes) != sourceBytes.size()) {
+    // Where the main source lives below /input. Single-file mode: the strategy's canonical name at the root.
+    // Project mode: the main file keeps its project directory (relative #include and Rust `mod` lookups depend on
+    // it) and its name, unless the name's suffix is not the one the strategy expects; then the canonical name is
+    // used inside that directory so the compiler still recognises the language.
+    QString mainRelPath = strategy->sourceFileName(req.sourceCode);
+    if (!req.mainFilePath.isEmpty()) {
+        if (!Workspace::isSafeRelativePath(req.mainFilePath)) {
             return finish(JobState::Failed, -1, FailureOrigin::Internal,
-                          "Failed to write source file to workspace");
+                          "Rejected main file path: '" + req.mainFilePath + "' is not a plain relative path");
         }
+        const QFileInfo mainInfo(req.mainFilePath);
+        const QString dir = mainInfo.path() == "." ? QString() : mainInfo.path() + "/";
+        mainRelPath = dir + (strategy->acceptsSourceName(mainInfo.fileName()) ? mainInfo.fileName() : mainRelPath);
     }
 
-    // Additional project files (headers, modules). Paths come from a project file and are untrusted:
-    // each one must resolve to a plain location below the input directory.
-    for (const auto& extra : req.extraFiles) {
+    // Paths come from a project file and are untrusted: each must resolve to a plain location below the input
+    // directory, and no two may name the same file (compared case-insensitively: the host file system may be).
+    QSet<QString> writtenPaths;
+    auto writeInput = [&](const QString& relPath, const QByteArray& bytes, QString* err) {
+        if (writtenPaths.contains(relPath.toLower())) {
+            *err = "Project file '" + relPath + "' collides with another file of the compilation (main source or duplicate path)";
+            return false;
+        }
         QString pathErr;
-        const QString target = Workspace::resolveInside(inputDir.path(), extra.first, &pathErr);
-        if (target.isEmpty()) {
-            return finish(JobState::Failed, -1, FailureOrigin::Internal, "Rejected project file: " + pathErr);
-        }
-        if (QFileInfo(target).fileName() == sourceFile && QFileInfo(target).absolutePath() == QFileInfo(inputDir.path()).canonicalFilePath()) {
-            return finish(JobState::Failed, -1, FailureOrigin::Internal,
-                          "Project file '" + extra.first + "' collides with the main source file name");
-        }
-        if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
-            return finish(JobState::Failed, -1, FailureOrigin::Internal, "Failed to create directory for " + extra.first);
-        }
+        const QString target = Workspace::resolveInside(inputDir.path(), relPath, &pathErr);
+        if (target.isEmpty()) { *err = "Rejected project file: " + pathErr; return false; }
+        if (!QDir().mkpath(QFileInfo(target).absolutePath())) { *err = "Failed to create directory for " + relPath; return false; }
         // Re-check now that parent directories exist.
-        if (Workspace::resolveInside(inputDir.path(), extra.first, &pathErr).isEmpty()) {
-            return finish(JobState::Failed, -1, FailureOrigin::Internal, "Rejected project file: " + pathErr);
+        if (Workspace::resolveInside(inputDir.path(), relPath, &pathErr).isEmpty()) { *err = "Rejected project file: " + pathErr; return false; }
+        QFile f(target);
+        if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size()) { *err = "Failed to write " + relPath; return false; }
+        writtenPaths.insert(relPath.toLower());
+        return true;
+    };
+
+    QString writeErr;
+    if (!writeInput(mainRelPath, sourceBytes, &writeErr)) {
+        return finish(JobState::Failed, -1, FailureOrigin::Internal, writeErr);
+    }
+    // Additional project files (headers, modules, manifests).
+    for (const auto& extra : req.extraFiles) {
+        bool ok = false;
+        const QString rel = Workspace::normalizeRelativePath(extra.first, &ok);
+        if (!ok) {
+            return finish(JobState::Failed, -1, FailureOrigin::Internal,
+                          "Rejected project file: unsafe path '" + extra.first + "'");
         }
-        QFile ef(target);
-        const QByteArray bytes = extra.second.toUtf8();
-        if (!ef.open(QIODevice::WriteOnly) || ef.write(bytes) != bytes.size()) {
-            return finish(JobState::Failed, -1, FailureOrigin::Internal, "Failed to write " + extra.first);
+        if (!writeInput(rel, extra.second.toUtf8(), &writeErr)) {
+            return finish(JobState::Failed, -1, FailureOrigin::Internal, writeErr);
         }
     }
 
-    const QString containerInputPath = "/input/" + sourceFile;
+    warnings << strategy->requestWarnings(effectiveReq);
+
+    const QString containerInputPath = "/input/" + mainRelPath;
     const QStringList compilerArgs = strategy->buildCompilerArgs(effectiveReq, containerInputPath, "/output");
     const QStringList dockerArgs = buildDockerRunArgs(req, activeConfig, containerName,
                                                       inputDir.path(), outputDir.path(), compilerArgs);
@@ -491,6 +510,7 @@ CompilationResult DockerExecutionBackend::execute(const CompilationRequest& req,
     result.stdoutTruncated = stdoutTruncated;
     result.stderrTruncated = stderrTruncated;
     result.artifactTruncated = artifactTruncated;
+    warnings << result.warnings;   // keep anything processOutput() reported
     result.warnings = warnings;
     result.durationMs = timer.elapsed();
     if (result.state == JobState::Failed) {

@@ -24,6 +24,25 @@ QString JavaStrategy::detectClassName(const QString& sourceCode) {
     return "Main";
 }
 
+QString JavaStrategy::sourceRoot(const QString& sourceCode, const QString& inputFilePath) {
+    // The main file's directory minus its package path: src/main/java/com/acme/App.java declaring
+    // `package com.acme;` has the source root src/main/java. A file outside its package directory
+    // (single-file mode) uses its own directory.
+    const int slash = inputFilePath.lastIndexOf('/');
+    QString root = slash > 0 ? inputFilePath.left(slash) : QStringLiteral("/");
+    static const QRegularExpression packageRe(R"(^\s*package\s+([A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*;)",
+                                              QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch m = packageRe.match(sourceCode);
+    if (m.hasMatch()) {
+        QString packagePath = m.captured(1);
+        packagePath.remove(QRegularExpression(R"(\s)"));
+        packagePath.replace('.', '/');
+        if (root.endsWith("/" + packagePath) && root.size() > packagePath.size() + 1)
+            root.chop(packagePath.size() + 1);
+    }
+    return root;
+}
+
 QString JavaStrategy::sourceFileName(const QString& sourceCode) const {
     return detectClassName(sourceCode) + ".java";
 }
@@ -43,8 +62,9 @@ QStringList JavaStrategy::buildCompilerArgs(const CompilationRequest& req,
     // (Outer$Inner.class, other top-level classes), so disassemble every generated class file.
     // Paths are passed as positional parameters ($1 outputDir, $2 inputFile, $3 className) and
     // never interpolated, which prevents command injection.
+    // $4 is the source root: other classes the main file uses (project mode) are compiled on demand from it.
     const char* script =
-        "javac -d \"$1\" -g \"$2\" || exit $?; "
+        "javac -d \"$1\" -g -implicit:class -sourcepath \"$4\" \"$2\" || exit $?; "
         "find \"$1\" -name '*.class' | sort | while IFS= read -r f; do "
         "  javap -c -v -p \"$f\" || exit 1; "
         "done";
@@ -54,6 +74,7 @@ QStringList JavaStrategy::buildCompilerArgs(const CompilationRequest& req,
     args << outputDirPath;
     args << inputFilePath;
     args << className;
+    args << sourceRoot(req.sourceCode, inputFilePath);
 
     return args;
 }

@@ -33,8 +33,24 @@ public:
 
     QVector<Diagnostic> parseDiagnostics(const QString& compilerOutput) const override;
 
-    /// Resolves Auto: Binary if the source declares a top-level `fn main`, otherwise Library.
-    static RustCrateType resolveCrateType(RustCrateType requested, const QString& sourceCode);
+    QStringList requestWarnings(const CompilationRequest& req) const override;
+
+    /// Resolves Auto. In project mode the crate root's path decides as Cargo does (`lib.rs` is a library,
+    /// `main.rs`, `src/bin/*.rs` and `examples/*.rs` are binaries); otherwise Binary if the source declares
+    /// `fn main`, else Library.
+    static RustCrateType resolveCrateType(RustCrateType requested, const QString& sourceCode,
+                                          const QString& mainFilePath = QString());
+
+    /// What OCTOS takes from a project's Cargo manifest. OCTOS calls rustc directly, without Cargo: only the
+    /// crate name and edition are used; dependencies and build scripts are not available (see warnings).
+    struct CrateInfo {
+        QString crateName{"octos_snippet"};
+        QString edition;          // empty: OCTOS default (2021)
+        QString manifestPath;     // project-relative Cargo.toml that was used; empty if none
+        QStringList warnings;
+    };
+    /// Reads the Cargo.toml nearest to req.mainFilePath among req.extraFiles (project mode only).
+    static CrateInfo crateInfo(const CompilationRequest& req);
 };
 
 #endif // RUSTSTRATEGY_H

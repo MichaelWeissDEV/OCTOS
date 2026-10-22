@@ -71,6 +71,9 @@ private slots:
     void testLlvmIrOutputKind();
     void testBoundedAppendAndUtf8();
     void testConfigSanitizingIsPerField();
+    void testProjectLayoutInSandbox();
+    void testProjectPathCollisionsRejected();
+    void testStrategyWarningsReachResult();
 };
 
 void TestDockerBackend::initTestCase() {
@@ -94,6 +97,11 @@ case "$1" in
     out=""
     for a in "$@"; do case "$a" in *:/output:rw) out="${a%:/output:rw}";; esac; done
     case "$MODE" in
+      listinput)
+        in=""
+        for a in "$@"; do case "$a" in *:/input:ro) in="${a%:/input:ro}";; esac; done
+        (cd "$in" && find . -type f | sort)
+        echo ".text" > "$out/output.s"; exit 0;;
       ok|clientexit) echo ".text" > "$out/output.s"; echo "define i32 @f() { ret i32 0 }" > "$out/output.ll"; echo "compiler says hi"; exit 0;;
       slowstart) sleep 1; echo ".text" > "$out/output.s"; exit 0;;
       compilererror) echo "source.cpp:1:5: error: 'x' was not declared in this scope" >&2; exit 1;;
@@ -432,6 +440,91 @@ void TestDockerBackend::testConfigSanitizingIsPerField() {
     QCOMPARE(s.pidsLimit, 256);
     QCOMPARE(s.cpuLimit, QString("2"));
     QVERIFY(s.validate());
+}
+
+void TestDockerBackend::testProjectLayoutInSandbox() {
+    setMode("listinput");
+    DockerExecutionBackend be(cfg());
+
+    // Single-file mode: the canonical name at the sandbox root, nothing else.
+    auto single = req(60);
+    auto r = be.execute(single);
+    QCOMPARE(r.state, JobState::Completed);
+    QVERIFY2(r.rawOutput.contains("./source.cpp"), qPrintable(r.rawOutput));
+    QVERIFY(r.compilerCommand.contains("/input/source.cpp"));
+
+    // Project mode: the main file keeps its project path and name, other files keep theirs.
+    auto proj = req(61);
+    proj.mainFilePath = "src/app/main.cc";
+    proj.extraFiles.append({QString("include/util.h"), QString("int util();")});
+    proj.extraFiles.append({QString("src/app/helper.h"), QString("int helper();")});
+    proj.includePaths = {"include"};
+    r = be.execute(proj);
+    QCOMPARE(r.state, JobState::Completed);
+    QVERIFY2(r.rawOutput.contains("./src/app/main.cc"), qPrintable(r.rawOutput));
+    QVERIFY(r.rawOutput.contains("./include/util.h"));
+    QVERIFY(r.rawOutput.contains("./src/app/helper.h"));
+    QVERIFY(!r.rawOutput.contains("source.cpp"));
+    QVERIFY(r.compilerCommand.contains("/input/src/app/main.cc"));
+    QVERIFY(r.compilerCommand.contains("-I/input/include"));
+
+    // A main file name the compiler would not recognise: canonical name, same directory.
+    auto odd = req(62);
+    odd.mainFilePath = "src/main.txt";
+    r = be.execute(odd);
+    QCOMPARE(r.state, JobState::Completed);
+    QVERIFY2(r.rawOutput.contains("./src/source.cpp"), qPrintable(r.rawOutput));
+}
+
+void TestDockerBackend::testProjectPathCollisionsRejected() {
+    setMode("listinput");
+    DockerExecutionBackend be(cfg());
+    auto expectRejected = [&](CompilationRequest q, const QString& needle) {
+        const auto r = be.execute(q);
+        QCOMPARE(r.state, JobState::Failed);
+        QCOMPARE(r.failureOrigin, FailureOrigin::Internal);
+        QVERIFY2(r.errorOutput.contains(needle), qPrintable(r.errorOutput));
+    };
+    // The main file sent again as an extra file.
+    auto a = req(70);
+    a.mainFilePath = "src/main.cpp";
+    a.extraFiles.append({QString("src/main.cpp"), QString("int x;")});
+    expectRejected(a, "collides");
+    // Same file differing only in case (one file on case-insensitive host file systems).
+    auto b = req(71);
+    b.mainFilePath = "src/main.cpp";
+    b.extraFiles.append({QString("SRC/Main.cpp"), QString("int x;")});
+    expectRejected(b, "collides");
+    // Duplicate extra files, after normalisation.
+    auto c = req(72);
+    c.extraFiles.append({QString("inc/a.h"), QString("1")});
+    c.extraFiles.append({QString("inc/./a.h"), QString("2")});
+    expectRejected(c, "collides");
+    // Unsafe main path.
+    auto d = req(73);
+    d.mainFilePath = "../escape.cpp";
+    expectRejected(d, "Rejected main file path");
+    auto e = req(74);
+    e.mainFilePath = "/abs/main.cpp";
+    expectRejected(e, "Rejected main file path");
+    // None of the rejected requests reached Docker.
+    for (const QString& line : callLog().split('\n')) QVERIFY2(!line.startsWith("run "), qPrintable(line));
+}
+
+void TestDockerBackend::testStrategyWarningsReachResult() {
+    DockerExecutionBackend be(cfg());
+    auto q = req(80);
+    q.language = Language::Rust;
+    q.compilerImage = "rust:1.80";
+    q.sourceCode = "pub fn f() {}";
+    q.mainFilePath = "src/lib.rs";
+    q.extraFiles.append({QString("Cargo.toml"), QString("[package]\nname = \"demo\"\n[dependencies]\nserde = \"1\"\n")});
+    const auto r = be.execute(q);
+    QCOMPARE(r.state, JobState::Completed);
+    bool found = false;
+    for (const QString& w : r.warnings) found = found || w.contains("declares dependencies");
+    QVERIFY2(found, qPrintable(r.warnings.join('\n')));
+    QVERIFY(r.compilerCommand.contains("--crate-name demo"));
 }
 
 OCTOS_TEST_MAIN(TestDockerBackend)

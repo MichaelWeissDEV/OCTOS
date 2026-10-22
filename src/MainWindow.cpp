@@ -519,6 +519,9 @@ void MainWindow::compileAllPanes() {
             req.mainFilePath = mainPath;
             for (const SourceFile& f : m_project->workspace().sourceFiles())
                 if (f.path != mainPath) req.extraFiles.append({f.path, f.content});
+            const Workspace& ws = m_project->workspace();
+            if (const BuildTarget* t = ws.findTarget(ws.configuration().activeTargetName))
+                req.includePaths = t->includePaths;
         }
 
         pane->setStatus("Compiling...");

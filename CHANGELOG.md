@@ -62,6 +62,13 @@ released**; this section only records what changed in the working tree.
   tested for all six themes. Dockable layout persisted between sessions, *Reset Layout*.
 
 - **LLVM IR output** for Clang and Rust (`Output` selector in the pane, profile field); GCC falls back to assembly.
+- **Real project layouts in the sandbox:** the main file keeps its project path (and its own name when the
+  compiler recognises the suffix, e.g. `.cc`), so relative `#include`s, Rust `mod` files and Java packages
+  resolve as in the real tree. C/C++ get `-I` for the project root, the main file's directory and the active
+  target's include paths; Java gets `-sourcepath` derived from the `package` declaration; Rust takes the crate
+  type from the crate root's path (`lib.rs`, `main.rs`, `src/bin/*.rs`) and crate name and edition from the
+  nearest `Cargo.toml`, and warns about dependencies and build scripts it cannot honour (rustc runs without
+  Cargo). Colliding (also case-insensitively) or unsafe paths are rejected before Docker is started.
 - AArch64 parsing, active target/profile menus, project profile editor, *Compile Now* (F5).
 
 ### Tests & tooling
@@ -73,8 +80,8 @@ released**; this section only records what changed in the working tree.
   AddressSanitizer and UBSan runs; weak assertions (`|| true`, mock-only checks) replaced.
 
 ### Known limits
-See `docs/limitations.md`. Notably: no real GNU GCC corpus, x86-64 only parsing, Docker is not a complete
-sandbox for hostile code.
+See `docs/limitations.md`. Notably: no real GNU GCC corpus, parsing for x86-64 and AArch64 only, no Cargo
+dependencies (single crate via rustc), Docker is not a complete sandbox for hostile code.
 
 ## [0.4.1] - 2026-10-14
 

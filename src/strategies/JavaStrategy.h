@@ -29,6 +29,8 @@ public:
 
     QVector<Diagnostic> parseDiagnostics(const QString& compilerOutput) const override;
 
+    /// Directory javac resolves the project's other classes from (-sourcepath), derived from the package.
+    static QString sourceRoot(const QString& sourceCode, const QString& inputFilePath);
     static QString detectClassName(const QString& sourceCode);
 };
 

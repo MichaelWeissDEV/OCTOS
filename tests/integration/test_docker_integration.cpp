@@ -1,322 +1,296 @@
+// End-to-end compilations through the REAL Docker backend with locally installed compiler images.
+// Every repository is matched by name, any tag counts (e.g. rust:1.96.1-bookworm). Nothing is pulled:
+// a missing image makes the test SKIP visibly - a skip is never evidence that a compiler works.
 #include "../TestSupport.h"
 #include <QTest>
 #include <QProcess>
+#include <QElapsedTimer>
+#include <thread>
+#include <atomic>
 #include "backend/DockerExecutionBackend.h"
 #include "backend/DockerExecutionConfig.h"
 #include "core/CompilationRequest.h"
 #include "core/CompilationResult.h"
 
+namespace {
+bool dockerAvailable() {
+    QProcess p;
+    p.start("docker", {"info"});
+    return p.waitForStarted(2000) && p.waitForFinished(8000) && p.exitCode() == 0;
+}
+
+// First locally installed image of any of the given repositories (any tag), or "".
+QString findImage(const QStringList& repos) {
+    for (const QString& repo : repos) {
+        QProcess p;
+        p.start("docker", {"images", "--format", "{{.Repository}}:{{.Tag}}", repo});
+        if (!p.waitForStarted(2000) || !p.waitForFinished(8000)) continue;
+        for (const QString& line : QString::fromUtf8(p.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts)) {
+            if (!line.endsWith(":<none>")) return line.trimmed();
+        }
+    }
+    return QString();
+}
+
+QString daemonArchitecture() {
+    QProcess p;
+    p.start("docker", {"info", "--format", "{{.Architecture}}"});
+    return p.waitForFinished(8000) ? QString::fromUtf8(p.readAllStandardOutput()).trimmed() : QString();
+}
+
+int containersNamed(const QString& prefix) {
+    QProcess p;
+    p.start("docker", {"ps", "-aq", "--filter", "name=" + prefix});
+    p.waitForFinished(8000);
+    return QString::fromUtf8(p.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts).size();
+}
+}
+
+#define REQUIRE_IMAGE(var, ...)                                                        \
+    if (!dockerAvailable()) QSKIP("Docker daemon not reachable", SkipAll);           \
+    const QString var = findImage({__VA_ARGS__});                                     \
+    if (var.isEmpty()) QSKIP("no local image of: " #__VA_ARGS__ " (not pulling)", SkipAll)
+
 class TestDockerIntegration : public QObject {
     Q_OBJECT
 
-private:
-    bool isDockerAvailable() {
-        QProcess proc;
-        proc.start("docker", QStringList() << "info");
-        if (!proc.waitForStarted(2000)) {
-            return false;
-        }
-        if (!proc.waitForFinished(3000)) {
-            proc.kill();
-            return false;
-        }
-        return proc.exitCode() == 0;
-    }
-
-    bool isImageAvailable(const QString& imageName) {
-        QProcess proc;
-        proc.start("docker", QStringList() << "images" << "-q" << imageName);
-        if (!proc.waitForStarted(2000) || !proc.waitForFinished(3000)) {
-            return false;
-        }
-        return !proc.readAllStandardOutput().trimmed().isEmpty();
+    CompilationRequest base(const QString& image, Language lang, quint64 job) {
+        CompilationRequest r;
+        r.jobId = job;
+        r.compilerImage = image;
+        r.language = lang;
+        r.targetArchitecture = daemonArchitecture();   // what OCTOS does for unverified images
+        r.timeoutMs = 120000;                           // first runs of big images can be slow
+        return r;
     }
 
 private slots:
-    void testGccCompilationSuccess();
-    void testGccCompilationOptimization();
-    void testGccCompilationSyntaxError();
-    void testClangCompilationSuccess();
-    void testClangCompilationSyntaxError();
-    void testRustCompilationSuccess();
-    void testRustCompilationOptimization();
-    void testRustCompilationSyntaxError();
-    void testJavaSimpleClass();
-    void testJavaPublicClass();
-    void testJavaCompilationSyntaxError();
-    void testPythonCompilationSuccess();
-    void testPythonCompilationSyntaxError();
-    void testCSharpExperimental();
-    void testAdaExperimental();
+    void testGccCompilation();
+    void testGccOptimizationChangesOutput();
+    void testGccSyntaxError();
+    void testClangCompilation();
+    void testClangLlvmIr();
+    void testRustLibraryWithoutMain();
+    void testRustBinaryWithMain();
+    void testRustOptimizationChangesOutput();
+    void testRustSyntaxErrorHasDiagnostics();
+    void testRustLlvmIr();
+    void testRustMultiFileCrate();
+    void testRustCancellationRemovesContainer();
+    void testJavaPackagesAndInnerClasses();
+    void testJavaSyntaxError();
+    void testPythonBytecode();
+    void testPythonSyntaxError();
 };
 
-void TestDockerIntegration::testGccCompilationSuccess() {
-    if (!isDockerAvailable()) {
-        QSKIP("Docker daemon is not running or not reachable.", 0);
-    }
-    QString image = "gcc:latest";
-    if (!isImageAvailable(image)) {
-        QSKIP("Image gcc:latest not installed locally. Skipping to avoid unprompted network pull.", 0);
-    }
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1001;
-    req.compilerImage = image;
-    req.language = Language::Cpp;
-    req.syntaxFlavor = SyntaxFlavor::Intel;
+void TestDockerIntegration::testGccCompilation() {
+    REQUIRE_IMAGE(image, "gcc");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Cpp, 1001);
     req.sourceCode = "int compute_val() { return 42; }";
-
-    CompilationResult res = backend.execute(req);
+    auto res = be.execute(req);
     QVERIFY2(res.success(), qPrintable(res.errorOutput));
     QVERIFY(res.assemblyOutput.contains("compute_val"));
     QVERIFY(res.hasArtifact(ArtifactType::Assembly));
 }
 
-void TestDockerIntegration::testGccCompilationOptimization() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "gcc:latest";
-    if (!isImageAvailable(image)) QSKIP("gcc:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1002;
-    req.compilerImage = image;
-    req.language = Language::Cpp;
-    req.userArgs = "-O3";
-    req.sourceCode = "int multiply(int a) { return a * 8; }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
-    // At -O3, a * 8 typically uses shift instruction (shl or lea)
-    QVERIFY(res.assemblyOutput.contains("shl") || res.assemblyOutput.contains("lea") || res.assemblyOutput.contains("sal"));
+void TestDockerIntegration::testGccOptimizationChangesOutput() {
+    REQUIRE_IMAGE(image, "gcc");
+    DockerExecutionBackend be;
+    auto a = base(image, Language::Cpp, 1002);
+    a.sourceCode = "int sum(int n){int s=0;for(int i=0;i<n;++i)s+=i;return s;}";
+    a.userArgs = "-O0";
+    auto b = a; b.jobId = 1003; b.userArgs = "-O3";
+    auto ra = be.execute(a), rb = be.execute(b);
+    QVERIFY2(ra.success() && rb.success(), qPrintable(ra.errorOutput + rb.errorOutput));
+    QVERIFY(ra.assemblyOutput != rb.assemblyOutput);
 }
 
-void TestDockerIntegration::testGccCompilationSyntaxError() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "gcc:latest";
-    if (!isImageAvailable(image)) QSKIP("gcc:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1003;
-    req.compilerImage = image;
-    req.language = Language::Cpp;
-    req.sourceCode = "int broken_syntax = ;";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(!res.success());
-    QVERIFY(!res.errorOutput.isEmpty());
+void TestDockerIntegration::testGccSyntaxError() {
+    REQUIRE_IMAGE(image, "gcc");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Cpp, 1004);
+    req.sourceCode = "int f() { return undefined_symbol; }";
+    auto res = be.execute(req);
+    QCOMPARE(res.state, JobState::Failed);
+    QCOMPARE(res.failureOrigin, FailureOrigin::Compiler);
     QVERIFY(!res.diagnostics.isEmpty());
+    QCOMPARE(res.diagnostics.first().line, 1);
 }
 
-void TestDockerIntegration::testClangCompilationSuccess() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "silkeh/clang:latest";
-    if (!isImageAvailable(image)) QSKIP("silkeh/clang:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1004;
-    req.compilerImage = image;
-    req.language = Language::Cpp;
-    req.sourceCode = "int clang_calc() { return 100; }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
-    QVERIFY(res.assemblyOutput.contains("clang_calc"));
+void TestDockerIntegration::testClangCompilation() {
+    REQUIRE_IMAGE(image, "silkeh/clang", "clang");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Cpp, 1005);
+    req.sourceCode = "int compute_val() { return 42; }";
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput));
+    QVERIFY(res.assemblyOutput.contains("compute_val"));
 }
 
-void TestDockerIntegration::testClangCompilationSyntaxError() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "silkeh/clang:latest";
-    if (!isImageAvailable(image)) QSKIP("silkeh/clang:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1005;
-    req.compilerImage = image;
-    req.language = Language::Cpp;
-    req.sourceCode = "void bad_clang() { non_existent_token(); }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(!res.success());
-    QVERIFY(!res.errorOutput.isEmpty());
+void TestDockerIntegration::testClangLlvmIr() {
+    REQUIRE_IMAGE(image, "silkeh/clang", "clang");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Cpp, 1006);
+    req.outputKind = OutputKind::LlvmIr;
+    req.sourceCode = "int square(int x) { return x * x; }";
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput));
+    QVERIFY(res.hasArtifact(ArtifactType::LLVM_IR));
+    QVERIFY(res.assemblyOutput.contains("define"));
 }
 
-void TestDockerIntegration::testRustCompilationSuccess() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "rust:latest";
-    if (!isImageAvailable(image)) QSKIP("rust:latest missing", 0);
+void TestDockerIntegration::testRustLibraryWithoutMain() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Rust, 1010);
+    req.sourceCode = "pub fn add_two(x: i32) -> i32 {\n    x + 2\n}\n";   // no main: Auto -> library
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput + "\n" + res.compilerCommand));
+    QVERIFY(res.assemblyOutput.contains("add_two"));
+    QVERIFY(res.compilerCommand.contains("--crate-type=lib"));
+    QVERIFY(res.hasArtifact(ArtifactType::Assembly));
+    // the assembly matches the daemon's architecture (aarch64 on Apple Silicon)
+    const QString arch = daemonArchitecture();
+    if (arch == "aarch64") QVERIFY2(res.assemblyOutput.contains("ret"), "expected AArch64 code");
+    if (arch.contains("aarch64")) QVERIFY(!res.compilerCommand.contains("x86-asm-syntax"));
+}
 
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1006;
-    req.compilerImage = image;
-    req.language = Language::Rust;
-    req.sourceCode = "pub fn add_two(x: i32) -> i32 { x + 2 }";
+void TestDockerIntegration::testRustBinaryWithMain() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Rust, 1011);
+    req.sourceCode = "fn main() { let v: Vec<i32> = (1..10).collect(); println!(\"{}\", v.iter().sum::<i32>()); }\n";
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput));
+    QVERIFY(res.compilerCommand.contains("--crate-type=bin"));
+    QVERIFY(res.assemblyOutput.contains("main"));
+}
 
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
+void TestDockerIntegration::testRustOptimizationChangesOutput() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto a = base(image, Language::Rust, 1012);
+    a.sourceCode = "#[no_mangle]\npub extern \"C\" fn sum(n: u32) -> u32 { let mut s = 0; for i in 0..n { s += i; } s }\n";
+    a.userArgs = "-C opt-level=0";
+    auto b = a; b.jobId = 1013; b.userArgs = "-C opt-level=3";
+    auto ra = be.execute(a), rb = be.execute(b);
+    QVERIFY2(ra.success() && rb.success(), qPrintable(ra.errorOutput + rb.errorOutput));
+    QVERIFY(ra.assemblyOutput != rb.assemblyOutput);
+    QVERIFY(ra.assemblyOutput.size() > rb.assemblyOutput.size());
+}
+
+void TestDockerIntegration::testRustSyntaxErrorHasDiagnostics() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Rust, 1014);
+    req.sourceCode = "pub fn broken_rust() -> i32 {\n    let x: i32 = \"not an int\";\n    x\n}\n";
+    auto res = be.execute(req);
+    QCOMPARE(res.state, JobState::Failed);
+    QCOMPARE(res.failureOrigin, FailureOrigin::Compiler);
+    QVERIFY2(res.errorOutput.contains("mismatched types"), qPrintable(res.errorOutput));
+    QVERIFY(!res.diagnostics.isEmpty());
+    QCOMPARE(res.diagnostics.first().line, 2);
+    QVERIFY(res.hasArtifact(ArtifactType::Diagnostics));
+}
+
+void TestDockerIntegration::testRustLlvmIr() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Rust, 1015);
+    req.outputKind = OutputKind::LlvmIr;
+    req.sourceCode = "#[no_mangle]\npub extern \"C\" fn add_two(x: i32) -> i32 { x + 2 }\n";
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput));
+    QVERIFY(res.hasArtifact(ArtifactType::LLVM_IR));
+    QVERIFY(res.assemblyOutput.contains("define"));
     QVERIFY(res.assemblyOutput.contains("add_two"));
 }
 
-void TestDockerIntegration::testRustCompilationOptimization() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "rust:latest";
-    if (!isImageAvailable(image)) QSKIP("rust:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1007;
-    req.compilerImage = image;
-    req.language = Language::Rust;
-    req.userArgs = "-C opt-level=3";
-    req.sourceCode = "pub fn square(x: i32) -> i32 { x * x }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
-    QVERIFY(res.assemblyOutput.contains("square"));
+void TestDockerIntegration::testRustMultiFileCrate() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Rust, 1016);
+    // A real crate layout: src/lib.rs declares a module that lives in src/math.rs.
+    req.mainFilePath = "src/lib.rs";
+    req.sourceCode = "pub mod math;\npub fn api(x: i32) -> i32 { math::triple(x) + 1 }\n";
+    req.extraFiles.append({QString("src/math.rs"), QString("pub fn triple(x: i32) -> i32 { x * 3 }\n")});
+    req.extraFiles.append({QString("Cargo.toml"), QString("[package]\nname = \"demo_crate\"\nedition = \"2021\"\n")});
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput + "\n" + res.compilerCommand));
+    QVERIFY(res.assemblyOutput.contains("api"));
+    QVERIFY(res.compilerCommand.contains("--crate-type=lib"));   // lib.rs is a library crate root
+    QVERIFY(res.compilerCommand.contains("demo_crate"));          // crate name taken from Cargo.toml
 }
 
-void TestDockerIntegration::testRustCompilationSyntaxError() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "rust:latest";
-    if (!isImageAvailable(image)) QSKIP("rust:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1008;
-    req.compilerImage = image;
-    req.language = Language::Rust;
-    req.sourceCode = "fn broken_rust() { let x: i32 = \"not an int\"; }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(!res.success());
-    QVERIFY(res.errorOutput.contains("mismatched types") || !res.errorOutput.isEmpty());
+void TestDockerIntegration::testRustCancellationRemovesContainer() {
+    REQUIRE_IMAGE(image, "rust");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Rust, 1017);
+    // A compile-time loop the const evaluator needs minutes for: the job is reliably still running when
+    // we cancel, independent of machine speed (a large function body proved too fast on a warm machine).
+    req.sourceCode =
+        "#![allow(long_running_const_eval)]\n"
+        "pub const SPIN: u64 = { let mut i = 0u64; let mut s = 0u64;\n"
+        "    while i < 4_000_000_000 { s = s.wrapping_add(i ^ (s >> 3)); i += 1; } s };\n"
+        "pub fn f() -> u64 { SPIN }\n";
+    std::atomic<bool> stop{false};
+    CompilationResult res;
+    std::thread t([&] { res = be.execute(req, [&] { return stop.load(); }); });
+    QTRY_VERIFY_WITH_TIMEOUT(!be.activeContainerNames().isEmpty(), 20000);
+    QTest::qWait(1500);
+    QElapsedTimer timer; timer.start();
+    stop = true;
+    t.join();
+    QVERIFY2(timer.elapsed() < 15000, "cancellation must stop the job promptly");
+    QCOMPARE(res.state, JobState::Cancelled);
+    QVERIFY(be.leakedContainers().isEmpty());
+    QTRY_COMPARE_WITH_TIMEOUT(containersNamed(QString("octos_%1_1017").arg(QCoreApplication::applicationPid())), 0, 10000);
 }
 
-void TestDockerIntegration::testJavaSimpleClass() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "eclipse-temurin:latest";
-    if (!isImageAvailable(image)) image = "openjdk:latest";
-    if (!isImageAvailable(image)) QSKIP("Java compiler image missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1009;
-    req.compilerImage = image;
-    req.language = Language::Java;
-    req.sourceCode = "class Simple { int calc() { return 7; } }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
-    QVERIFY(res.assemblyOutput.contains("calc"));
+void TestDockerIntegration::testJavaPackagesAndInnerClasses() {
+    REQUIRE_IMAGE(image, "eclipse-temurin", "openjdk");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Java, 1020);
+    req.sourceCode = "package demo.pkg;\npublic class Outer {\n  static class Inner { int v() { return 3; } }\n  int w() { return new Inner().v(); }\n}\n";
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput));
+    QVERIFY(res.assemblyOutput.contains("demo.pkg.Outer"));
+    QVERIFY(res.assemblyOutput.contains("Inner"));
     QVERIFY(res.hasArtifact(ArtifactType::JVM_Bytecode));
 }
 
-void TestDockerIntegration::testJavaPublicClass() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "eclipse-temurin:latest";
-    if (!isImageAvailable(image)) image = "openjdk:latest";
-    if (!isImageAvailable(image)) QSKIP("Java compiler image missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1010;
-    req.compilerImage = image;
-    req.language = Language::Java;
-    req.sourceCode = "public class Greeter { public static void main(String[] args) {} }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
-    QVERIFY(res.assemblyOutput.contains("Greeter"));
+void TestDockerIntegration::testJavaSyntaxError() {
+    REQUIRE_IMAGE(image, "eclipse-temurin", "openjdk");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Java, 1021);
+    req.sourceCode = "public class Main {\n  int f() { return \"x\"; }\n}\n";
+    auto res = be.execute(req);
+    QCOMPARE(res.failureOrigin, FailureOrigin::Compiler);
+    QVERIFY(!res.diagnostics.isEmpty());
+    QCOMPARE(res.diagnostics.first().line, 2);
 }
 
-void TestDockerIntegration::testJavaCompilationSyntaxError() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "eclipse-temurin:latest";
-    if (!isImageAvailable(image)) image = "openjdk:latest";
-    if (!isImageAvailable(image)) QSKIP("Java compiler image missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1011;
-    req.compilerImage = image;
-    req.language = Language::Java;
-    req.sourceCode = "public class BadJava { void foo() { missing_semicolon } }";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(!res.success());
-}
-
-void TestDockerIntegration::testPythonCompilationSuccess() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "python:latest";
-    if (!isImageAvailable(image)) QSKIP("python:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1012;
-    req.compilerImage = image;
-    req.language = Language::Python;
+void TestDockerIntegration::testPythonBytecode() {
+    REQUIRE_IMAGE(image, "python");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Python, 1030);
     req.sourceCode = "def factorial(n):\n    return 1 if n <= 1 else n * factorial(n - 1)\n";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(res.success());
-    QVERIFY(res.assemblyOutput.contains("LOAD_CONST") || res.assemblyOutput.contains("RETURN_VALUE"));
+    auto res = be.execute(req);
+    QVERIFY2(res.success(), qPrintable(res.errorOutput));
+    QVERIFY(res.assemblyOutput.contains("CPython Bytecode"));
     QVERIFY(res.hasArtifact(ArtifactType::CPython_Bytecode));
 }
 
-void TestDockerIntegration::testPythonCompilationSyntaxError() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "python:latest";
-    if (!isImageAvailable(image)) QSKIP("python:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1013;
-    req.compilerImage = image;
-    req.language = Language::Python;
+void TestDockerIntegration::testPythonSyntaxError() {
+    REQUIRE_IMAGE(image, "python");
+    DockerExecutionBackend be;
+    auto req = base(image, Language::Python, 1031);
     req.sourceCode = "def broken_python(:\n  pass";
-
-    CompilationResult res = backend.execute(req);
-    QVERIFY(!res.success());
-    QVERIFY(!res.errorOutput.isEmpty());
-}
-
-void TestDockerIntegration::testCSharpExperimental() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "mono:latest";
-    if (!isImageAvailable(image)) QSKIP("mono:latest missing (C# is experimental in OCTOS)", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1014;
-    req.compilerImage = image;
-    req.language = Language::CSharp;
-    req.sourceCode = "public class Program { public static void Main() {} }";
-
-    CompilationResult res = backend.execute(req);
-    // Verified or experimental execution
-    QVERIFY(res.state == JobState::Completed || res.state == JobState::Failed);
-}
-
-void TestDockerIntegration::testAdaExperimental() {
-    if (!isDockerAvailable()) QSKIP("Docker offline", 0);
-    QString image = "gcc:latest";
-    if (!isImageAvailable(image)) QSKIP("gcc:latest missing", 0);
-
-    DockerExecutionBackend backend;
-    CompilationRequest req;
-    req.jobId = 1015;
-    req.compilerImage = image;
-    req.language = Language::Ada;
-    req.sourceCode = "procedure Hello is begin null; end Hello;";
-
-    CompilationResult res = backend.execute(req);
-    // GNAT toolchain availability check
-    QVERIFY(res.state == JobState::Completed || res.state == JobState::Failed);
+    auto res = be.execute(req);
+    QCOMPARE(res.failureOrigin, FailureOrigin::Compiler);
+    QVERIFY(!res.diagnostics.isEmpty());
+    QCOMPARE(res.diagnostics.first().line, 1);
 }
 
 OCTOS_TEST_MAIN(TestDockerIntegration)

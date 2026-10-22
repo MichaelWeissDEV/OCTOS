@@ -2,6 +2,7 @@
 #define CLANGSTRATEGY_H
 
 #include "ILanguageStrategy.h"
+#include "StrategyUtils.h"
 
 class ClangStrategy : public ILanguageStrategy {
 public:
@@ -12,6 +13,9 @@ public:
     QString languageId() const override;
     QString defaultCompilerBinary(const QString& dockerImage) const override;
     QString sourceFileName(const QString& sourceCode) const override;
+    bool acceptsSourceName(const QString& fileName) const override {
+        return StrategyUtils::isSourceSuffixFor(language(), fileName);
+    }
     QString outputFileName() const override;
     QString outputFileFor(const CompilationRequest& req) const override;
     bool supportsOutputKind(OutputKind kind, const CompilationRequest& req) const override;
